@@ -44,7 +44,7 @@ const failure = (code: string, message: string, details?: unknown) => ({
 const execFileAsync = promisify(execFile);
 
 export function createMcpServer(ctx: McpContext, log: { error: (obj: unknown, msg: string) => void }): Server {
-  const server = new Server({ name: "mailqivo", version: "0.2.4" }, { capabilities: { tools: {}, resources: {} } });
+  const server = new Server({ name: "mailqivo", version: "0.2.5" }, { capabilities: { tools: {}, resources: {} } });
   const tools = new Map(MCP_TOOLS.map((tool) => [tool.name as string, tool]));
   const listed: Tool[] = [
     ...MCP_TOOLS.map((tool) => ({ name: tool.name, description: tool.description, inputSchema: inputSchemaOf(tool) as { type: "object" } })),
