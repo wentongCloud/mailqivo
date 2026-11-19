@@ -24,11 +24,11 @@ import { assertUnsubscribeConfigured } from "../../mail/unsubscribe.ts";
 import type { PageParams } from "../../lib/pagination.ts";
 import { toPage } from "../../lib/pagination.ts";
 import { sanitizeEmailHtml } from "../../render/sanitize.ts";
-import { templateVariables } from "../../render/template.ts";
+import { BUILTIN_TEMPLATE_KEYS, templateVariables } from "../../render/template.ts";
 import type { ChannelRuntimeConfig } from "../channels/service.ts";
 import { buildContactWhere } from "../contacts/where.ts";
 import { getPrepareWarnRecipientThreshold, getSettings } from "../settings/service.ts";
-import { campaignFooter, renderCampaign, resolveSignature, type CampaignRow } from "./render.ts";
+import { renderCampaign, resolveSignature, type CampaignRow } from "./render.ts";
 import {
   assertRuleAttachments,
   assertRuleTagsExist,
@@ -196,15 +196,14 @@ async function validateVariables(db: Db, row: CampaignRow, runtime: ChannelRunti
     resolveSignature(db, row),
     db.execute<{ key: string }>(sql`SELECT DISTINCT jsonb_object_keys(custom_fields) AS key FROM contacts`)
   ]);
-  const source = `${row.subject}${row.html}${signature?.html ?? ""}${campaignFooter(runtime, settings.footer_html)}`;
+  const source = `${row.subject}${row.html}${signature?.html ?? ""}${settings.footer_html}`;
   const vars = templateVariables(source);
   const blocks = new Set((row.ai_blocks as { key: string }[]).map((block) => block.key));
   const custom = new Set(customKeys.rows.map((item) => item.key));
-  const builtins = new Set(["sys.unsubscribe_url", "unsubscribe_url", "公司名", "公司地址", "姓名", "name", "公司", "company", "职位", "title", "邮箱", "email"]);
   const unknown = vars
     .filter((item) => !item.hasDefault)
     .filter((item) => {
-      if (builtins.has(item.key) || custom.has(item.key)) return false;
+      if (BUILTIN_TEMPLATE_KEYS.has(item.key) || custom.has(item.key)) return false;
       if (item.key.startsWith("ai.")) return !blocks.has(item.key.slice(3));
       if (item.key.startsWith("ai_")) return !blocks.has(item.key.slice(3));
       return true;

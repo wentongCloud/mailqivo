@@ -1,3 +1,5 @@
+import { resolveSalutation, SALUTATION_KEY } from "./salutation.ts";
+
 export type RenderContact = {
   email: string;
   name?: string | null;
@@ -28,6 +30,19 @@ export function escapeHtml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 }
 
+/** 联系人内置字段的变量名（含中文别名）→ 联系人列。模板渲染与 AI 区块取字段共用。 */
+export const CONTACT_FIELD_KEYS: Readonly<Record<string, "name" | "company" | "title" | "email">> = {
+  姓名: "name", name: "name",
+  公司: "company", company: "company",
+  职位: "title", title: "title",
+  邮箱: "email", email: "email"
+};
+
+const SYSTEM_KEYS = ["sys.unsubscribe_url", "unsubscribe_url", "公司名", "公司地址"] as const;
+
+/** 不依赖自定义字段、总能解析的变量名（ai.* 另按区块校验）。发送前校验用。 */
+export const BUILTIN_TEMPLATE_KEYS: ReadonlySet<string> = new Set([...SYSTEM_KEYS, ...Object.keys(CONTACT_FIELD_KEYS), SALUTATION_KEY]);
+
 function valueForKey(key: string, context: RenderContext): string | undefined {
   if (key === "sys.unsubscribe_url" || key === "unsubscribe_url") {
     return context.unsubscribe_url;
@@ -36,17 +51,9 @@ function valueForKey(key: string, context: RenderContext): string | undefined {
   if (key === "公司地址") return context.settings.company_address;
   if (key.startsWith("ai.")) return context.ai_content?.[key.slice(3)];
   if (key.startsWith("ai_")) return context.ai_content?.[key.slice(3)];
-  const builtins: Record<string, string | null | undefined> = {
-    姓名: context.contact.name,
-    name: context.contact.name,
-    公司: context.contact.company,
-    company: context.contact.company,
-    职位: context.contact.title,
-    title: context.contact.title,
-    邮箱: context.contact.email,
-    email: context.contact.email
-  };
-  if (key in builtins) return builtins[key] ?? undefined;
+  const field = CONTACT_FIELD_KEYS[key];
+  if (field) return context.contact[field] ?? undefined;
+  if (key === SALUTATION_KEY) return resolveSalutation(context.contact);
   return context.contact.custom_fields?.[key];
 }
 

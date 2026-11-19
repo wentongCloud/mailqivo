@@ -2,7 +2,7 @@ import ExcelJS from "exceljs";
 import iconv from "iconv-lite";
 import jschardet from "jschardet";
 import { parse } from "csv-parse/sync";
-import type { FieldMapping, MappedImportData } from "@mailqivo/shared";
+import { COUNTRY_KEYS, normalizeCountryField, type FieldMapping, type MappedImportData } from "@mailqivo/shared";
 import { Errors } from "../../lib/errors.ts";
 
 export type ParsedImport = {
@@ -78,7 +78,7 @@ const ALIAS_SOURCE: [string, string][] = [
 ];
 
 const CUSTOM_KEY: Record<string, string> = {
-  country: "国家/地区",
+  country: COUNTRY_KEYS[0],
   city: "城市",
   phone: "手机",
   department: "部门"
@@ -117,7 +117,7 @@ export function classifyHeader(header: string): { field: string | null; slot: nu
     if (field && CONTACT_FIELDS.has(field)) return { field, slot: Number(trailing[2]) };
   }
   // 表头通常很短。「公司公共邮箱（多个逗号分隔）」含邮箱；备注正文里提到邮箱不算表头。
-  if (normalized.length <= 40 && /邮箱|email|电邮/.test(normalized) && !/状态|验证|是否/.test(normalized)) {
+  if (normalized.length <= 40 && !normalized.includes("@") && /邮箱|email|电邮/.test(normalized) && !/状态|验证|是否/.test(normalized)) {
     return { field: "email", slot: 1 };
   }
   return { field: null, slot: 1 };
@@ -412,5 +412,6 @@ export function mapRawRow(raw: Record<string, string>, mapping: FieldMapping): M
       if (key && value && !(data.custom_fields ?? {})[key]) (data.custom_fields ??= {})[key] = value;
     }
   }
+  if (data.custom_fields) data.custom_fields = normalizeCountryField(data.custom_fields);
   return data;
 }

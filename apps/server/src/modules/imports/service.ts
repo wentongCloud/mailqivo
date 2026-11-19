@@ -11,6 +11,7 @@ import {
   type ImportSampleRow,
   type MappedImportData
 } from "@mailqivo/shared";
+import { normalizeCountryField } from "@mailqivo/shared";
 import type { Db } from "../../db/client.ts";
 import { contactTags, contacts, importBatches, importRows, tags } from "../../db/schema.ts";
 import { consumeConfirmToken, issueConfirmToken } from "../../lib/confirm-token.ts";
@@ -234,10 +235,17 @@ export async function commitImport(db: Db, id: string, body: ImportCommitBody) {
     }
     // 批量写入（原先逐行 INSERT / UPDATE，10 万行即 10 万次往返）。
     const taggedIds: string[] = [];
+    let actualCreated = 0;
+    let actualUpdated = 0;
+    let actualSkipped = plan.summary.total - plan.importable.length;
     const toUpdate: { id: string; name: string | null; company: string | null; title: string | null; custom_fields: Record<string, string> }[] = [];
     const toCreate: MappedImportData[] = [];
     const planExisting = (existing: Contact, data: MappedImportData) => {
-      if (body.dedup_strategy === "skip") return;
+      if (body.dedup_strategy === "skip") {
+        actualSkipped += 1;
+        return;
+      }
+      actualUpdated += 1;
       if (body.dedup_strategy === "overwrite") {
         const custom = { ...(existing.custom_fields as Record<string, string>) };
         for (const [key, value] of Object.entries(data.custom_fields ?? {})) if (value !== "") custom[key] = value;
@@ -246,7 +254,7 @@ export async function commitImport(db: Db, id: string, body: ImportCommitBody) {
           name: data.name || existing.name,
           company: data.company || existing.company,
           title: data.title || existing.title,
-          custom_fields: custom
+          custom_fields: normalizeCountryField(custom)
         });
       }
       taggedIds.push(existing.id);
@@ -272,6 +280,7 @@ export async function commitImport(db: Db, id: string, body: ImportCommitBody) {
       for (const row of created) {
         taggedIds.push(row.id);
         createdEmails.push(row.email);
+        actualCreated += 1;
       }
       // 预检之后被并发创建的同邮箱联系人：不再整批失败，按去重策略当作已存在处理。
       if (created.length < chunk.length) {
@@ -298,7 +307,7 @@ export async function commitImport(db: Db, id: string, body: ImportCommitBody) {
       .update(importBatches)
       .set({ status: "committed", dedup_strategy: body.dedup_strategy, tag_ids: body.tag_ids, committed_at: new Date() })
       .where(eq(importBatches.id, id));
-    return { created: plan.summary.created, updated: plan.summary.updated, skipped: plan.summary.skipped };
+    return { created: actualCreated, updated: actualUpdated, skipped: actualSkipped };
   });
   if (result instanceof AppError) throw result;
   if (createdEmails.length) scheduleMxProbe(db, createdEmails);

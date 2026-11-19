@@ -152,7 +152,7 @@ const COMMON: L<
       "Large recipient list: preparation will enqueue everyone, which may take time and disk space.",
     aiPreviewNotice: "AI-generated — please verify facts",
     openRateDisclaimer:
-      "Open rate is affected by client privacy and image proxies; treat as a lower-bound estimate.",
+      "Open rate is affected by email client privacy protections and image proxies; use it for reference only.",
     yes: "Yes",
     exportEmail: "Email",
     exportName: "Name",

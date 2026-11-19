@@ -42,7 +42,7 @@ import { clearEditorDraft, promoteTemplateVariables, readEditorDraft, writeEdito
 import { cn } from "@/lib/utils";
 
 /** Product variable keys stay Chinese (and sys.*) regardless of UI locale. */
-const VARIABLE_KEYS = ["姓名", "公司", "职位", "邮箱"] as const;
+const VARIABLE_KEYS = ["称呼", "姓名", "公司", "职位", "邮箱"] as const;
 const compact = (value: string) => value.replace(/\s+/g, "");
 const AUTOSAVE_MS = 10_000;
 

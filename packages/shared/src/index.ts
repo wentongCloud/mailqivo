@@ -2,6 +2,8 @@ export * from "./enums.ts";
 export * from "./contact-filter.ts";
 export * from "./auth.ts";
 export * from "./template-variables.ts";
+export * from "./contact-profile.ts";
+export * from "./iso3166.ts";
 export * from "./dto/index.ts";
 export * from "./i18n/index.ts";
 export * from "./gics.ts";

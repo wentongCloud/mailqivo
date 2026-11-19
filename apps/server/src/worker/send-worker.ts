@@ -223,6 +223,17 @@ type PreparedSend = {
   mailer: MailChannel;
 };
 
+/** 交接前异常的重试上限：退避 1、2、4、8、16 分钟，约 31 分钟后仍失败则置 failed。 */
+export const PREPARE_FAILURE_LIMIT = 6;
+
+/** 公网退订源暂时不可达：合规前置条件，无限期等待恢复，不计入 prepare_failures。 */
+export class UnsubscribeSyncError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "UnsubscribeSyncError";
+  }
+}
+
 export async function processClaimedMessage(
   db: Db, message: MessageRow, runtime: Runtime, options: SendWorkerOptions = {},
   synchronize = () => syncUnsubscribeEvents(db, runtime, options.fetchUnsubscribeEvents)
@@ -231,10 +242,9 @@ export async function processClaimedMessage(
   try {
     prepared = await prepareSend(db, message, runtime, options, synchronize);
   } catch (error) {
-    // SMTP 交接之前的异常（数据库抖动、通道解密失败等）：邮件肯定未发出，退回队列稍后重试，
-    // 不能留在 sending 等租约过期被标成 unknown（unknown 表示“可能已发出”，需人工确认）。
+    // SMTP 交接之前的异常：邮件肯定未发出，不能留在 sending 等租约过期被标成 unknown（“可能已发出”）。
     try {
-      await releaseClaim(db, message, { status: "queued", next_attempt_at: new Date(Date.now() + 60_000) });
+      await handlePrepareFailure(db, message, error);
     } catch (releaseError) {
       console.error(`[send-worker] message ${message.id} 退回队列失败`, releaseError);
     }
@@ -242,6 +252,27 @@ export async function processClaimedMessage(
   }
   if (!prepared) return;
   await deliver(db, message, options, prepared);
+}
+
+async function handlePrepareFailure(db: Db, message: MessageRow, error: unknown) {
+  if (error instanceof UnsubscribeSyncError) {
+    await releaseClaim(db, message, { status: "queued", next_attempt_at: new Date(Date.now() + 60_000) });
+    return;
+  }
+  // 数据库抖动等瞬时错误退避重试；通道配置解密失败等确定性错误达到上限后置 failed，让活动可以结束并在界面可见。
+  const failures = message.prepare_failures + 1;
+  const detail = error instanceof Error ? error.message : String(error);
+  if (failures >= PREPARE_FAILURE_LIMIT) {
+    await finishMessage(db, message, {
+      status: "failed", failure_reason: "UNKNOWN", prepare_failures: failures,
+      smtp_response: `发送前准备连续失败 ${failures} 次（未交给 SMTP）：${detail}`.slice(0, 2000)
+    });
+    return;
+  }
+  await releaseClaim(db, message, {
+    status: "queued", prepare_failures: failures,
+    next_attempt_at: new Date(Date.now() + 60_000 * 2 ** (failures - 1))
+  });
 }
 
 /** 交接前的全部步骤：返回 null 表示 message 已被终结或释放（无需投递）。 */
@@ -278,7 +309,9 @@ async function prepareSend(
 
   await (options.rateLimiter ?? noWait).wait(channel.id, channel.rate_per_minute);
   // 公网退订源不可达时抛出：SMTP 尚未开始，由外层退回队列，等退订源恢复。
-  if (runtime.UNSUBSCRIBE_PUBLIC_URL || runtime.UNSUBSCRIBE_SHARED_SECRET) await synchronize();
+  if (runtime.UNSUBSCRIBE_PUBLIC_URL || runtime.UNSUBSCRIBE_SHARED_SECRET) {
+    await synchronize().catch((error: unknown) => { throw new UnsubscribeSyncError(error); });
+  }
   let rendered: Awaited<ReturnType<typeof renderCampaign>>;
   try {
     rendered = await renderCampaign(db, campaign, {
@@ -411,9 +444,6 @@ export async function runSendWorkerOnce(db: Db, runtime: Runtime, options: SendW
   }
 }
 
-/** 公网退订事件的最短同步间隔：连续发送时不必每封邮件都请求一次公网接口。 */
-const UNSUBSCRIBE_SYNC_MIN_INTERVAL_MS = 10_000;
-
 export function startSendWorker(db: Db, runtime: Runtime, options: SendWorkerOptions = {}) {
   // 默认按通道缓存持久 SMTP 连接池；worker 停止时统一关闭。
   const mailers = options.mailerFactory ? undefined : createMailerCache();
@@ -426,11 +456,8 @@ export function startSendWorker(db: Db, runtime: Runtime, options: SendWorkerOpt
     rateLimitEvents: options.rateLimitEvents ?? new Map()
   };
   let syncing: Promise<void> | undefined;
-  let lastSync = 0;
   const synchronize = () => {
-    if (Date.now() - lastSync < UNSUBSCRIBE_SYNC_MIN_INTERVAL_MS) return Promise.resolve();
     syncing ??= syncUnsubscribeEvents(db, runtime, options.fetchUnsubscribeEvents)
-      .then(() => { lastSync = Date.now(); })
       .finally(() => { syncing = undefined; });
     return syncing;
   };

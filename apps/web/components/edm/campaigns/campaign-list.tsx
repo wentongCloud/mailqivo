@@ -7,12 +7,13 @@ import { Edit, Plus } from "lucide-react";
 import { useTranslations } from "next-intl";
 import type { CampaignListDto } from "@mailqivo/shared";
 import { useCampaigns } from "@/lib/api/campaigns";
+import { ApiError } from "@/lib/api/client";
 import { useLocalizedLabels } from "@/lib/use-app-locale";
 import { DeleteCampaignButton } from "./delete-campaign-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -31,11 +32,11 @@ export function CampaignList() {
   const tc = useTranslations("Common");
   const { campaignStatus, dateLocale } = useLocalizedLabels();
   const [page, setPage] = React.useState(1);
-  const { data, isLoading } = useCampaigns(page);
+  const { data, isLoading, isError, error, refetch } = useCampaigns(page);
   const items = data?.items ?? [];
   return <div className="space-y-4">
     <div className="flex items-center justify-between"><div><h1 className="text-2xl font-semibold">{t("title")}</h1></div><Button asChild><Link href="/campaigns/new"><Plus />{t("new")}</Link></Button></div>
-    {isLoading ? <Skeleton className="h-64" /> : items.length === 0 ? <Empty><EmptyHeader><EmptyTitle>{t("empty")}</EmptyTitle></EmptyHeader><Button asChild><Link href="/campaigns/new"><Plus />{t("new")}</Link></Button></Empty> : <Card><CardContent className="overflow-x-auto p-0"><Table>
+    {isLoading ? <Skeleton className="h-64" /> : isError ? <Empty><EmptyHeader><EmptyTitle>{tc("failed")}</EmptyTitle><EmptyDescription>{error instanceof ApiError ? error.message : tc("requestFailed")}</EmptyDescription></EmptyHeader><Button variant="outline" onClick={() => void refetch()}>{tc("retry")}</Button></Empty> : items.length === 0 ? <Empty><EmptyHeader><EmptyTitle>{t("empty")}</EmptyTitle></EmptyHeader><Button asChild><Link href="/campaigns/new"><Plus />{t("new")}</Link></Button></Empty> : <Card><CardContent className="overflow-x-auto p-0"><Table>
       <TableHeader><TableRow><TableHead>{t("name")}</TableHead><TableHead>{t("status")}</TableHead><TableHead className="min-w-40">{t("progress")}</TableHead><TableHead>{t("openRate")}</TableHead><TableHead>{t("createdAt")}</TableHead><TableHead className="text-right">{tc("actions")}</TableHead></TableRow></TableHeader>
       <TableBody>{items.map((item) => {
         const processed = item.metrics.sent + item.metrics.failed + item.metrics.bounced;

@@ -1,0 +1,67 @@
+{
+  "prefixes": {
+    "common": [
+      "mr", "mrs", "ms", "miss", "mx", "master", "madam", "mdm", "dr", "doctor", "prof", "professor",
+      "assoc prof", "asst prof", "rev", "reverend", "fr", "father", "pastor", "rabbi", "imam",
+      "sister", "brother", "hon", "honorable", "honourable", "judge", "engr", "atty", "arch"
+    ],
+    "military_police": [
+      "capt", "captain", "col", "colonel", "lt", "lieutenant", "lt col", "maj", "major", "gen", "general",
+      "brig", "brig gen", "sgt", "sergeant", "cpl", "pte", "cmdr", "commander", "adm", "admiral",
+      "insp", "inspector", "supt", "superintendent", "det", "officer"
+    ],
+    "united_states": [
+      "gov", "governor", "sen", "senator", "rep", "representative", "amb", "ambassador", "mayor"
+    ],
+    "united_kingdom": [
+      "sir", "dame", "lord", "lady", "baron", "baroness", "viscount", "viscountess", "earl", "countess",
+      "duke", "duchess", "rt hon", "right hon", "right honourable", "the rt hon", "the hon", "cllr"
+    ],
+    "canada": [
+      "the honourable"
+    ],
+    "australia_new_zealand": [
+      "cr", "clr", "councillor"
+    ],
+    "hong_kong": [
+      "ir", "sr"
+    ],
+    "singapore_malaysia": [
+      "encik", "en", "puan", "pn", "cik", "haji", "hj", "hajjah", "hjh",
+      "dato", "datuk", "datin", "dato seri", "datuk seri", "dato sri", "datin seri", "datin paduka",
+      "tan sri", "puan sri", "tun", "toh puan", "yb", "yang berhormat", "tengku", "tunku", "yam"
+    ],
+    "india": [
+      "shri", "shree", "smt", "shrimati", "kumari", "kum", "adv", "advocate", "er"
+    ],
+    "philippines": [
+      "kgg", "gng", "bb"
+    ]
+  },
+  "suffixes": {
+    "common": [
+      "jr", "sr", "ii", "iii", "iv", "v",
+      "phd", "md", "dds", "dmd", "do", "dvm", "jd", "llm", "llb", "edd", "psyd",
+      "mba", "msc", "ma", "ms", "bsc", "ba", "beng", "meng", "bcom",
+      "cpa", "cfa", "cfp", "pmp", "pe", "rn", "esq"
+    ],
+    "united_kingdom": [
+      "kc", "qc", "mp", "obe", "mbe", "cbe", "kbe", "dbe", "gbe", "frcs", "frcp", "aca", "fca", "acca", "fcca", "cma"
+    ],
+    "canada": [
+      "oc", "cm", "peng", "mla", "mpp"
+    ],
+    "australia_new_zealand": [
+      "ac", "ao", "am", "oam", "onzm", "knzm", "cnzm", "mnzm", "fracs", "mbbs"
+    ],
+    "hong_kong_singapore": [
+      "jp", "sbs", "bbs", "mh", "gbs", "gbm", "sc"
+    ],
+    "india": [
+      "ca", "cs", "bds"
+    ],
+    "united_states": [
+      "facs", "facp"
+    ]
+  }
+}

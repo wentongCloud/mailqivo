@@ -12,6 +12,8 @@ import { aiCache } from "../db/schema.ts";
 import { stableStringify } from "../lib/confirm-token.ts";
 import type { LlmClient } from "./llm-client.ts";
 import { blockSystemPrompt, blockUserPrompt } from "./prompts.ts";
+import { CONTACT_FIELD_KEYS } from "../render/template.ts";
+import { resolveSalutation, SALUTATION_KEY } from "../render/salutation.ts";
 
 /** 参与生成的活动字段。 */
 export type AiCampaign = {
@@ -51,22 +53,16 @@ export function blockInstructionHash(campaign: Pick<AiCampaign, "ai_goal" | "ai_
   return createHash("sha256").update(stableStringify(payload)).digest("hex");
 }
 
-const BUILTIN_FIELDS: Record<string, "name" | "company" | "title" | "email"> = {
-  name: "name", 姓名: "name",
-  company: "company", 公司: "company",
-  title: "title", 职位: "title",
-  email: "email", 邮箱: "email"
-};
 
 /**
  * §8.2「只传白名单字段」：按 ai_fields 顺序取联系人字段，内置字段（name/company/title/email 及中文别名）
- * 取列值，其余取 custom_fields[key]；空值不传。联系人的 Tags 永远不在这里出现。
+ * 取列值，「称呼」与模板 {{称呼}} 同规则生成，其余取 custom_fields[key]；空值不传。联系人的 Tags 永远不在这里出现。
  */
 export function pickContactFields(contact: AiContact, aiFields: readonly string[]): Record<string, string> {
   const result: Record<string, string> = {};
   for (const key of aiFields) {
-    const builtin = BUILTIN_FIELDS[key];
-    const raw = builtin ? contact[builtin] : contact.custom_fields[key];
+    const builtin = CONTACT_FIELD_KEYS[key];
+    const raw = builtin ? contact[builtin] : key === SALUTATION_KEY ? resolveSalutation(contact) : contact.custom_fields[key];
     if (raw === null || raw === undefined) continue;
     const value = String(raw).trim();
     if (value) result[key] = value;

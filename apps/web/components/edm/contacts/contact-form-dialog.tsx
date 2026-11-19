@@ -7,7 +7,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { z } from "zod";
 import { Star } from "lucide-react";
-import { MANUAL_CONSENT_SOURCE_VALUES, type ContactDto } from "@mailqivo/shared";
+import { CITY_KEYS, COUNTRY_KEYS, LANGUAGE_KEYS, MANUAL_CONSENT_SOURCE_VALUES, readProfileField, type ContactDto } from "@mailqivo/shared";
 import { useLocalizedLabels } from "@/lib/use-app-locale";
 
 import { ApiError } from "@/lib/api/client";
@@ -35,7 +35,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CountrySelect } from "./country-combobox";
 import { IndustrySelect } from "./industry-combobox";
+import { TitleSelect } from "./title-select";
 
 function buildFormSchema(t: ReturnType<typeof useTranslations<"Contacts">>) {
   return z.object({
@@ -58,20 +60,9 @@ type FormValues = z.infer<ReturnType<typeof buildFormSchema>>;
 const splitTags = (text: string) =>
   [...new Set(text.split(/[,，、\n]/).map((s) => s.trim()).filter(Boolean))];
 
-/** 导入写入中文键；表单同时认英文键，保存时归并到第一项。 */
-export const COUNTRY_KEYS = ["国家/地区", "国家", "country"] as const;
-export const CITY_KEYS = ["城市", "city"] as const;
-export const LANGUAGE_KEYS = ["语言偏好", "language"] as const;
+/** 资料字段的 key 与读取规则在 @mailqivo/shared，服务端生成 {{称呼}} 时用同一份。 */
+export { CITY_KEYS, COUNTRY_KEYS, LANGUAGE_KEYS, readProfileField };
 export const LANGUAGE_OPTIONS = ["中文", "English"] as const;
-
-export function readProfileField(fields: Record<string, string> | undefined, keys: readonly string[]) {
-  if (!fields) return "";
-  for (const key of keys) {
-    const value = fields[key]?.trim();
-    if (value) return value;
-  }
-  return "";
-}
 
 function writeProfileField(fields: Record<string, string>, keys: readonly string[], value: string) {
   for (const key of keys) delete fields[key];
@@ -210,9 +201,7 @@ function ContactForm({ contact, onDone }: { contact?: ContactDto; onDone: () => 
             render={({ field }) => (
               <FormItem>
                 <FormLabel>{t("titleField")}</FormLabel>
-                <FormControl>
-                  <Input {...field} />
-                </FormControl>
+                <TitleSelect value={field.value} onChange={field.onChange} />
                 <FormMessage />
               </FormItem>
             )}
@@ -238,9 +227,7 @@ function ContactForm({ contact, onDone }: { contact?: ContactDto; onDone: () => 
             render={({ field }) => (
               <FormItem>
                 <FormLabel>{t("country")}</FormLabel>
-                <FormControl>
-                  <Input {...field} />
-                </FormControl>
+                <CountrySelect value={field.value} onChange={field.onChange} />
                 <FormMessage />
               </FormItem>
             )}

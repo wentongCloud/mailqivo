@@ -15,6 +15,7 @@ const PLACEHOLDER_KEYS = [
   { key: "公司", aliases: ["company"], sourceKey: "p_company_source", fallbackKey: "p_company_fallback" },
   { key: "职位", aliases: ["title"], sourceKey: "p_title_source", fallbackKey: "p_title_fallback" },
   { key: "邮箱", aliases: ["email"], sourceKey: "p_email_source", fallbackKey: "p_email_fallback" },
+  { key: "称呼", aliases: [], sourceKey: "p_salutation_source", fallbackKey: "p_salutation_fallback" },
   {
     key: "ai.<block_key>",
     aliases: ["ai_<block_key>"],

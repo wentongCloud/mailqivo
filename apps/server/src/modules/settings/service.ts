@@ -29,10 +29,9 @@ export async function getSettings(db: Db): Promise<SettingsDto> {
 }
 
 export async function updateSettings(db: Db, body: Partial<SettingsBody>): Promise<SettingsDto> {
-  machineOpenPatterns.clear();
   const cleaned = { ...body };
   if (cleaned.footer_html !== undefined) cleaned.footer_html = sanitizeEmailHtml(cleaned.footer_html);
-  return db.transaction(async (tx) => {
+  const updated = await db.transaction(async (tx) => {
     const trx = tx as unknown as Db;
     for (const [key, value] of Object.entries(cleaned)) {
       await trx
@@ -42,6 +41,9 @@ export async function updateSettings(db: Db, body: Partial<SettingsBody>): Promi
     }
     return getSettings(trx);
   });
+  // 提交之后再失效：若在事务内清空，并发的打开追踪可能读到旧值并重新缓存 30 秒。
+  machineOpenPatterns.clear();
+  return updated;
 }
 
 export async function getPrepareWarnRecipientThreshold(db: Db): Promise<number> {

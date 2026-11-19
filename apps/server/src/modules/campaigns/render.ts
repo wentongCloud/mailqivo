@@ -11,10 +11,6 @@ import type { ChannelRuntimeConfig } from "../channels/service.ts";
 
 export type CampaignRow = typeof campaigns.$inferSelect;
 
-export function campaignFooter(runtime: ChannelRuntimeConfig, footerHtml: string): string {
-  return runtime.MAIL_PUBLIC_BASE_URL && !runtime.UNSUBSCRIBE_PUBLIC_URL ? footerHtml : "";
-}
-
 export async function resolveSignature(db: Db, row: CampaignRow) {
   if (row.signature_id) {
     const [signature] = await db.select().from(signatures).where(eq(signatures.id, row.signature_id));
@@ -53,7 +49,7 @@ export async function renderCampaign(
   const rendered = renderPipeline({
     html: row.html,
     signature_html: signature?.html,
-    footer_html: campaignFooter(runtime, settings.footer_html),
+    footer_html: settings.footer_html,
     subject: row.subject,
     context: {
       contact: input.contact,

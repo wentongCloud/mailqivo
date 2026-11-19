@@ -11,7 +11,7 @@ import { getChannelMailer } from "../channels/service.ts";
 import { getContact } from "../contacts/service.ts";
 import { getSettings } from "../settings/service.ts";
 import { resolveChannelForTest } from "./channel.ts";
-import { campaignFooter, contactForRender, renderCampaign } from "./render.ts";
+import { contactForRender, renderCampaign } from "./render.ts";
 import { getCampaignRow, type CampaignRuntimeConfig } from "./service.ts";
 import { assertRuleAttachments, contactIndustry, matchContentRule, parseStoredRules } from "./content-rules.ts";
 
@@ -52,7 +52,7 @@ export async function testSendCampaign(db: Db, id: string, body: CampaignTestSen
   const mailer = await getChannelMailer(db, channel.id, runtime);
   const selected = body.contact_id ? await getContact(db, body.contact_id) : null;
   const settings = await getSettings(db);
-  const source = `${campaign.subject}${campaign.html}${campaignFooter(runtime, settings.footer_html)}`;
+  const source = `${campaign.subject}${campaign.html}${settings.footer_html}`;
   const attachments = await testSendAttachments(db, runtime, campaign.content_rules, selected?.tags ?? [], selected ? contactIndustry(selected.custom_fields) : "");
   const aiContent = Object.fromEntries((campaign.ai_blocks as { key: string }[]).map((block) => [block.key, `[AI:${block.key}]`]));
   const items: CampaignTestSendResult["items"] = [];

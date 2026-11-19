@@ -389,6 +389,7 @@ export const messages = pgTable(
     rendered_vars: jsonb(), // 发送时实际使用的变量快照（可追溯）
     rendered_subject: text(),
     attempt: integer().notNull().default(0),
+    prepare_failures: integer().notNull().default(0), // SMTP 交接前异常的累计次数（与 SMTP 重试的 attempt 分开计）
     next_attempt_at: timestamptz().notNull().defaultNow(),
     locked_at: timestamptz(),
     send_lease_id: uuid(),

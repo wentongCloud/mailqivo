@@ -13,10 +13,12 @@ import { useAssets } from "@/lib/api/assets";
 import { useImproveDraft } from "@/lib/api/campaigns";
 import { useTags } from "@/lib/api/tags";
 import { ApiError } from "@/lib/api/client";
-import { CampaignSamples } from "./ai-sidebar";
+import { toggleRuleSelection } from "@/lib/rule-selection";
+import { AiSidebar } from "./ai-sidebar";
 import { EmailEditor } from "@/components/edm/email-editor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -52,7 +54,6 @@ export function ComposePanel({
   const tIndustry = useTranslations("Industry");
   const [improveOpen, setImproveOpen] = React.useState(false);
   const industries = industryOptions(tIndustry);
-  const blocks = useWatch({ control: form.control, name: "ai_blocks" });
   return (
     <Card>
       <CardContent className="space-y-3 p-4">
@@ -110,7 +111,7 @@ export function ComposePanel({
           </Button>
         </div>
         <AttachmentBar form={form} industries={industries} />
-        {!!blocks?.length && <CampaignSamples form={form} onSave={onAutosave} />}
+        <AiSidebar form={form} onSave={onAutosave} />
       </CardContent>
       <ImproveDialog
         open={improveOpen}
@@ -299,26 +300,45 @@ function TagChip({ form, index }: { form: Form; index: number }) {
       control={form.control}
       name={`content_rules.${index}.tags_all`}
       render={({ field }) => {
-        const current = field.value?.[0] ?? ANY;
+        const selected = field.value ?? [];
         const known = new Set(tags.map((tag) => tag.name));
+        const options = [
+          ...tags.map((tag) => ({ id: tag.id, name: tag.name, available: true })),
+          ...selected.filter((name) => !known.has(name)).map((name) => ({ id: name, name, available: false }))
+        ];
         return (
-          <Select
-            value={current}
-            onValueChange={(value) => field.onChange(value === ANY ? [] : [value])}
-          >
-            <SelectTrigger className="w-32" aria-label={t("attachTag")}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ANY}>{t("attachAnyTag")}</SelectItem>
-              {tags.map((tag) => (
-                <SelectItem key={tag.id} value={tag.name}>
-                  {tag.name}
-                </SelectItem>
-              ))}
-              {current !== ANY && !known.has(current) && <SelectItem value={current}>{current}</SelectItem>}
-            </SelectContent>
-          </Select>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline" size="sm" className="max-w-56" aria-label={t("attachTag")}>
+                <span className="truncate">{selected.length ? selected.join(", ") : t("attachAnyTag")}</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-72 p-2" align="start">
+              {options.length === 0 ? (
+                <p className="text-muted-foreground p-2 text-sm">{t("attachAnyTag")}</p>
+              ) : (
+                <ul className="max-h-56 space-y-1 overflow-y-auto">
+                  {options.map((option) => {
+                    const checked = selected.includes(option.name);
+                    return (
+                      <li key={option.id}>
+                        <label className="hover:bg-muted flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm">
+                          <Checkbox
+                            checked={checked}
+                            disabled={!checked && selected.length >= CONTENT_RULE_LIMITS.tags_all}
+                            onCheckedChange={(next) =>
+                              field.onChange(toggleRuleSelection(selected, option.name, next === true, CONTENT_RULE_LIMITS.tags_all))
+                            }
+                          />
+                          <span className={option.available ? "truncate" : "text-destructive truncate"}>{option.name}</span>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </PopoverContent>
+          </Popover>
         );
       }}
     />
@@ -328,39 +348,52 @@ function TagChip({ form, index }: { form: Form; index: number }) {
 function FileChip({ form, index }: { form: Form; index: number }) {
   const t = useTranslations("CampaignEditor");
   const { data: assets = [] } = useAssets();
-  const enabled = assets.filter((asset) => asset.enabled);
   return (
     <FormField
       control={form.control}
       name={`content_rules.${index}.attachment_ids`}
       render={({ field }) => {
-        const id = field.value?.[0];
-        const asset = assets.find((item) => item.id === id);
+        const selected = field.value ?? [];
+        const byId = new Map(assets.map((asset) => [asset.id, asset]));
+        const options = [
+          ...assets.filter((asset) => asset.enabled),
+          ...selected.filter((id) => !byId.get(id)?.enabled).map((id) => byId.get(id) ?? {
+            id,
+            filename: id,
+            enabled: false
+          })
+        ];
+        const label = selected.map((id) => byId.get(id)?.filename ?? id).join(", ");
         return (
           <Popover>
             <PopoverTrigger asChild>
               <Button type="button" variant="outline" size="sm" className="max-w-64">
                 <FileText />
-                <span className="truncate">{asset?.filename ?? (id ? id : t("pickAttachment"))}</span>
+                <span className="truncate">{label || t("pickAttachment")}</span>
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-72 p-2" align="start">
-              {enabled.length === 0 ? (
+              {options.length === 0 ? (
                 <p className="text-muted-foreground p-2 text-sm">{t("noAssets")}</p>
               ) : (
                 <ul className="max-h-56 space-y-1 overflow-y-auto">
-                  {enabled.map((item) => (
-                    <li key={item.id}>
-                      <Button
-                        type="button"
-                        variant={item.id === id ? "secondary" : "ghost"}
-                        className="w-full justify-start"
-                        onClick={() => field.onChange([item.id])}
-                      >
-                        <span className="truncate">{item.filename}</span>
-                      </Button>
-                    </li>
-                  ))}
+                  {options.map((item) => {
+                    const checked = selected.includes(item.id);
+                    return (
+                      <li key={item.id}>
+                        <label className="hover:bg-muted flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm">
+                          <Checkbox
+                            checked={checked}
+                            disabled={!checked && selected.length >= CONTENT_RULE_LIMITS.attachments}
+                            onCheckedChange={(next) =>
+                              field.onChange(toggleRuleSelection(selected, item.id, next === true, CONTENT_RULE_LIMITS.attachments))
+                            }
+                          />
+                          <span className={item.enabled ? "truncate" : "text-destructive truncate"}>{item.filename}</span>
+                        </label>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </PopoverContent>

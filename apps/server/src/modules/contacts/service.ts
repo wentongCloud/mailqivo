@@ -14,6 +14,7 @@ import {
   type CreateContactBody,
   type UpdateContactBody
 } from "@mailqivo/shared";
+import { normalizeCountryField } from "@mailqivo/shared";
 import type { Db } from "../../db/client.ts";
 import { contactTags, contacts, tags } from "../../db/schema.ts";
 import { consumeConfirmToken, issueConfirmToken } from "../../lib/confirm-token.ts";
@@ -141,7 +142,7 @@ export async function createContact(db: Db, body: CreateContactBody): Promise<Co
           name: body.name ?? null,
           company: body.company ?? null,
           title: body.title ?? null,
-          custom_fields: body.custom_fields ?? {},
+          custom_fields: normalizeCountryField(body.custom_fields ?? {}),
           source: "manual",
           consent_source: body.consent_source ?? "manual",
           consent_at: sql`now()`
@@ -160,7 +161,8 @@ export async function createContact(db: Db, body: CreateContactBody): Promise<Co
 
 export async function updateContact(db: Db, id: string, body: UpdateContactBody): Promise<ContactDto> {
   await getContact(db, id); // 不存在则 NOT_FOUND
-  const { tags: tagNames, ...fields } = body;
+  const { tags: tagNames, ...rest } = body;
+  const fields = rest.custom_fields ? { ...rest, custom_fields: normalizeCountryField(rest.custom_fields) } : rest;
   try {
     await db.transaction(async (tx) => {
       const trx = tx as unknown as Db;

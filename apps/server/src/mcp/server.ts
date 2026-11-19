@@ -43,8 +43,15 @@ const failure = (code: string, message: string, details?: unknown) => ({
 
 const execFileAsync = promisify(execFile);
 
+export function openWorkspaceWeb(platform = process.platform, run = execFileAsync) {
+  if (platform === "win32") {
+    return run("rundll32.exe", ["url.dll,FileProtocolHandler", WORKSPACE_WEB_URL], { timeout: 5_000 });
+  }
+  return run(platform === "darwin" ? "/usr/bin/open" : "xdg-open", [WORKSPACE_WEB_URL], { timeout: 5_000 });
+}
+
 export function createMcpServer(ctx: McpContext, log: { error: (obj: unknown, msg: string) => void }): Server {
-  const server = new Server({ name: "mailqivo", version: "0.2.5" }, { capabilities: { tools: {}, resources: {} } });
+  const server = new Server({ name: "mailqivo", version: "0.2.7" }, { capabilities: { tools: {}, resources: {} } });
   const tools = new Map(MCP_TOOLS.map((tool) => [tool.name as string, tool]));
   const listed: Tool[] = [
     ...MCP_TOOLS.map((tool) => ({ name: tool.name, description: tool.description, inputSchema: inputSchemaOf(tool) as { type: "object" } })),
@@ -87,7 +94,7 @@ export function createMcpServer(ctx: McpContext, log: { error: (obj: unknown, ms
     if (request.params.name === WORKSPACE_TOOL_NAME) return { content: [] };
     if (request.params.name === WORKSPACE_OPEN_WEB_TOOL_NAME) {
       try {
-        await execFileAsync("/usr/bin/open", [WORKSPACE_WEB_URL], { timeout: 5_000 });
+        await openWorkspaceWeb();
         return { content: [{ type: "text" as const, text: JSON.stringify({ opened: true, url: WORKSPACE_WEB_URL }) }] };
       } catch (err) {
         log.error({ err, tool: WORKSPACE_OPEN_WEB_TOOL_NAME }, "failed to open Mailqivo Web console");
