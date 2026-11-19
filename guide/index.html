@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mailqivo User Guide</title>
+<style>
+  :root { font: 17px/1.6 system-ui,sans-serif; color: #192734; background: #f5f8fb; }
+  body { margin: 0 auto; max-width: 960px; padding: 2rem clamp(1rem, 5vw, 3rem); }
+  header, section { background: white; border: 1px solid #d7e2ec; border-radius: 12px; padding: 1.25rem clamp(1rem, 4vw, 2rem); margin: 0 0 1rem; }
+  h1, h2 { line-height: 1.15; margin: .4em 0; }
+  nav { display: flex; flex-wrap: wrap; gap: .5rem 1rem; }
+  a { color: #0058a0; }
+  figure { margin: 1.2rem 0 .5rem; }
+  img { display: block; width: 100%; height: auto; border: 1px solid #d7e2ec; border-radius: 8px; }
+  figcaption { margin-top: .5rem; color: #445667; font-size: .9rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Mailqivo User Guide</h1>
+  <p>Set up a workspace, prepare a campaign, and review a personalized email before approval.</p>
+  <nav aria-label="Guide sections"><a href="#settings">Settings</a><a href="#campaign">Campaign</a><a href="#results">Results and replies</a></nav>
+</header>
+<main>
+  <section id="settings">
+    <h2>Set up the workspace</h2>
+    <p>Follow the <a href="../README.md">installation instructions</a> or run the <a href="../demo/README.md">sample workspace</a>. Open Mailqivo from Codex or sign in to the web console.</p>
+    <ol>
+      <li>Open Settings and review restricted phrases and the large-audience warning under Send checks.</li>
+      <li>Open Sending channels to configure the sender address, SMTP delivery, and optional IMAP reply polling.</li>
+      <li>Open People to add or import the intended audience.</li>
+    </ol>
+    <figure><img src="screenshots/compliance.jpg" alt="Send checks settings in the demo console"><figcaption>Review content and audience checks in Settings.</figcaption></figure>
+    <figure><img src="screenshots/channels.jpg" alt="Sending channels listing the Demo only channel"><figcaption>The demo uses a disconnected channel with fictional settings.</figcaption></figure>
+  </section>
+  <section id="campaign">
+    <h2>Prepare and preview a campaign</h2>
+    <ol>
+      <li>Open Campaign list and create a draft. Choose the channel and intended recipients.</li>
+      <li>Enter the subject and body. Insert contact placeholders where needed.</li>
+      <li>Save the draft. In Codex, ask Mailqivo to preview the campaign for sample contacts, then review each resolved subject and body.</li>
+    </ol>
+    <figure><img src="screenshots/campaign.jpg" alt="The Basics step of the workshop campaign"><figcaption>Choose the channel and review the subject in Basics.</figcaption></figure>
+    <figure><img src="screenshots/audience.jpg" alt="The Audience step with fictional workshop contacts"><figcaption>Review who will receive the campaign under Audience.</figcaption></figure>
+    <figure><img src="screenshots/content.jpg" alt="The Content step showing the workshop message and contact placeholders"><figcaption>Edit the message and save the draft under Content.</figcaption></figure>
+    <p>Stop at preview in the sample workspace. In a configured sending workspace, review the recipients and message before approving delivery.</p>
+  </section>
+  <section id="results">
+    <h2>Review results and replies</h2>
+    <p>For unsubscribe links, use the <a href="unsubscribe.md">local demo and self-hosting instructions</a>. The hosted WentongCloud unsubscribe service serves WentongCloud campaigns.</p>
+    <p>Open the campaign to review queued and completed delivery records. Open Replies to review matched messages. Ask Mailqivo in Codex to summarize unhandled replies and suggest follow-up.</p>
+    <figure><img src="screenshots/results.jpg" alt="Workshop draft with zero mail delivery records"><figcaption>Use the campaign detail page to review its status and delivery totals.</figcaption></figure>
+  </section>
+</main>
+<footer><a href="https://docsintel.com">Mailqivo website</a> · <a href="https://github.com/wentongCloud/mailqivo">Source code</a></footer>
+</body>
+</html>

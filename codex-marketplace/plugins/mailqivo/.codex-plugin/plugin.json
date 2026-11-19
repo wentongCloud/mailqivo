@@ -1,0 +1,31 @@
+{
+  "name": "mailqivo",
+  "version": "0.2.4",
+  "description": "Draft one campaign in Codex, preview personalized emails, send after you approve, and track results and replies.",
+  "author": {
+    "name": "wentong cloud"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Mailqivo",
+    "shortDescription": "Personalized email campaigns",
+    "longDescription": "Draft one campaign for your audience in Codex. Preview personalized emails for sample recipients, approve sending, and track delivery and replies.",
+    "developerName": "wentong cloud",
+    "websiteURL": "https://docsintel.com",
+    "category": "Communication",
+    "capabilities": [
+      "Interactive",
+      "MCP",
+      "Skills"
+    ],
+    "defaultPrompt": [
+      "Draft and preview a personalized email campaign for an audience.",
+      "Summarize unhandled campaign replies and suggest follow-up."
+    ],
+    "logo": "./assets/logo.png",
+    "composerIcon": "./assets/logo.png"
+  },
+  "homepage": "https://docsintel.com",
+  "repository": "https://github.com/wentongCloud/mailqivo"
+}

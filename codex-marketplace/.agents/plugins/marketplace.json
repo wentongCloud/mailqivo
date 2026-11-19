@@ -1,0 +1,20 @@
+{
+  "name": "mailqivo-local",
+  "interface": {
+    "displayName": "Mailqivo Local"
+  },
+  "plugins": [
+    {
+      "name": "mailqivo",
+      "source": {
+        "source": "local",
+        "path": "./plugins/mailqivo"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Communication"
+    }
+  ]
+}

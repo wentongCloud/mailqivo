@@ -1,0 +1,32 @@
+{
+  "name": "mailqivo",
+  "version": "0.1.0",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE",
+  "type": "module",
+  "packageManager": "pnpm@11.28.5",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @mailqivo/server --filter @mailqivo/web --parallel dev",
+    "dev:web": "pnpm --filter @mailqivo/web dev",
+    "dev:server": "pnpm --filter @mailqivo/server dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r --if-present test",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "db:start": "pnpm --filter @mailqivo/server db:start",
+    "db:migrate": "pnpm --filter @mailqivo/server db:migrate",
+    "db:generate": "pnpm --filter @mailqivo/server db:generate"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "globals": "^16.5.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.50.0"
+  },
+  "homepage": "https://docsintel.com",
+  "repository": "https://github.com/wentongCloud/mailqivo"
+}
