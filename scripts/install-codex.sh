@@ -31,9 +31,10 @@ trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT INT TERM
 [[ "$EUID" -ne 0 ]] || fail "Run this installer as the current desktop user, not with sudo."
 
 NODE_BIN="$(command -v node 2>/dev/null || true)"
-[[ -n "$NODE_BIN" ]] || fail "Node.js was not found. Install Node.js 22 or later first."
+[[ -n "$NODE_BIN" ]] || fail "Node.js was not found. Install Node.js 22.13+ in the 22.x series, or Node.js 24 or later."
 NODE_MAJOR="$("$NODE_BIN" -p 'Number(process.versions.node.split(".")[0])')"
-(( NODE_MAJOR >= 22 )) || fail "Node.js 22 or later is required."
+NODE_MINOR="$("$NODE_BIN" -p 'Number(process.versions.node.split(".")[1])')"
+(( (NODE_MAJOR == 22 && NODE_MINOR >= 13) || NODE_MAJOR >= 24 )) || fail "Node.js 22.13+ or 24+ is required."
 
 PNPM_BIN="$(command -v pnpm 2>/dev/null || true)"
 if [[ -z "$PNPM_BIN" ]] && command -v corepack >/dev/null 2>&1; then
@@ -70,13 +71,59 @@ find_codex() {
 CODEX_BIN="$(find_codex)"
 [[ -n "$CODEX_BIN" ]] || fail "Codex CLI was not found. Install and launch the latest Codex or ChatGPT desktop app first."
 
+step "Checking existing Mailqivo installation"
+MARKETPLACES_JSON="$("$CODEX_BIN" plugin marketplace list --json)"
+REGISTERED_ROOT="$(print -r -- "$MARKETPLACES_JSON" | "$NODE_BIN" -e '
+  let input=""; process.stdin.on("data", d => input += d).on("end", () => {
+    const item=JSON.parse(input).marketplaces.find(x => x.name === "mailqivo-local");
+    process.stdout.write(item?.root || "");
+  });
+')"
+if [[ -n "$REGISTERED_ROOT" && "${REGISTERED_ROOT:A}" != "${MARKETPLACE_ROOT:A}" ]]; then
+  fail "mailqivo-local already points to another directory: $REGISTERED_ROOT"
+fi
+for service in codex-env postgres server web; do
+  service_plist="$HOME/Library/LaunchAgents/com.mailqivo.$service.plist"
+  [[ -e "$service_plist" || -L "$service_plist" ]] || continue
+  service_root="$(/usr/bin/plutil -extract WorkingDirectory raw -o - "$service_plist")" || \
+    fail "Cannot determine the installation directory for $service_plist"
+  [[ -n "$service_root" && "${service_root:A}" == "$PROJECT_ROOT" ]] || \
+    fail "The existing Mailqivo $service service belongs to another installation: $service_root"
+done
+
+check_service_port() {
+  local port="$1" service="$2" pid job_pid parent_pid listeners
+  local plist="$HOME/Library/LaunchAgents/com.mailqivo.$service.plist"
+  listeners="$(/usr/sbin/lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null)" || {
+    [[ "$?" == 1 && -z "$listeners" ]] && return 0
+    fail "Could not check TCP port $port."
+  }
+  # launchd owns the wrapper, while PostgreSQL and Next.js may listen from a child.
+  job_pid="$(/bin/launchctl print "gui/$(id -u)/com.mailqivo.$service" 2>/dev/null |
+    /usr/bin/awk '$1 == "pid" && $2 == "=" && !found { print $3; found=1 }')" || job_pid=""
+  [[ -f "$plist" && "$job_pid" == <1-> ]] || fail "TCP port $port is in use outside this installation."
+  for pid in ${(f)listeners}; do
+    while [[ "$pid" != "$job_pid" ]]; do
+      [[ "$pid" == <2-> ]] || fail "TCP port $port is in use outside this installation."
+      parent_pid="$(/bin/ps -o ppid= -p "$pid" 2>/dev/null)" || fail "Could not verify the owner of TCP port $port."
+      pid="${parent_pid//[[:space:]]/}"
+    done
+  done
+}
+check_service_port 5432 postgres
+check_service_port 18090 web
+check_service_port 18091 server
+
 for required in package.json pnpm-lock.yaml .env.example \
+  apps/web/public/images/extra/image4.jpg \
   codex-marketplace/.agents/plugins/marketplace.json \
   codex-marketplace/plugins/mailqivo/.codex-plugin/plugin.json \
   codex-marketplace/plugins/mailqivo/.mcp.json \
   scripts/service/install-macos.sh demo/config.mjs demo/seed.mjs; do
   [[ -f "$PROJECT_ROOT/$required" ]] || fail "Required file is missing: $required"
 done
+
+"$NODE_BIN" "$PROJECT_ROOT/scripts/check-installation.mjs"
 
 step "Validating the minimal plugin package"
 typeset -a EXPECTED_PLUGIN_FILES ACTUAL_PLUGIN_FILES
@@ -135,7 +182,6 @@ random_hex() { "$NODE_BIN" -e "process.stdout.write(require('node:crypto').rando
 random_base64() { "$NODE_BIN" -e "process.stdout.write(require('node:crypto').randomBytes($1).toString('base64'))"; }
 
 step "Preparing secure local configuration"
-NEW_ADMIN_PASSWORD=""
 if [[ ! -f "$ENV_FILE" ]]; then
   cp "$PROJECT_ROOT/.env.example" "$ENV_FILE"
 fi
@@ -157,8 +203,7 @@ value="$(env_value MCP_TOKEN)"
 [[ -n "$value" && "$value" != change-me* ]] || set_env_value MCP_TOKEN "$(random_hex 32)"
 value="$(env_value ADMIN_PASSWORD)"
 if [[ -z "$value" || "$value" == change-me* ]]; then
-  NEW_ADMIN_PASSWORD="$(random_hex 12)"
-  set_env_value ADMIN_PASSWORD "$NEW_ADMIN_PASSWORD"
+  set_env_value ADMIN_PASSWORD "$(random_hex 12)"
 fi
 MCP_TOKEN_VALUE="$(env_value MCP_TOKEN)"
 [[ -n "$MCP_TOKEN_VALUE" ]] || fail "MCP_TOKEN could not be generated."
@@ -198,6 +243,7 @@ wait_http() {
 
 wait_http "Mailqivo API" "http://127.0.0.1:18091/healthz" "200"
 wait_http "Mailqivo Web" "http://127.0.0.1:18090/login" "200"
+wait_http "Mailqivo login image" "$WEB_URL/images/extra/image4.jpg" "200"
 if [[ -f "$STARTER_DATA_PENDING" ]]; then
   step "Loading starter data"
   "$NODE_BIN" "$PROJECT_ROOT/demo/seed.mjs" --install
@@ -233,17 +279,8 @@ MCP_TOKEN="$MCP_TOKEN_VALUE" "$NODE_BIN" --input-type=module -e '
 cd "$PROJECT_ROOT"
 
 step "Registering the Mailqivo plugin"
-MARKETPLACES_JSON="$("$CODEX_BIN" plugin marketplace list --json)"
-REGISTERED_ROOT="$(print -r -- "$MARKETPLACES_JSON" | "$NODE_BIN" -e '
-  let input=""; process.stdin.on("data", d => input += d).on("end", () => {
-    const item=JSON.parse(input).marketplaces.find(x => x.name === "mailqivo-local");
-    process.stdout.write(item?.root || "");
-  });
-')"
 if [[ -z "$REGISTERED_ROOT" ]]; then
   "$CODEX_BIN" plugin marketplace add "$MARKETPLACE_ROOT" --json >/dev/null
-elif [[ "${REGISTERED_ROOT:A}" != "${MARKETPLACE_ROOT:A}" ]]; then
-  fail "mailqivo-local already points to another directory: $REGISTERED_ROOT"
 fi
 
 SOURCE_VERSION="$("$NODE_BIN" -p 'require(process.argv[1]).version' "$PLUGIN_ROOT/.codex-plugin/plugin.json")"
@@ -311,11 +348,12 @@ if (( ! SKIP_CODEX_RESTART )); then
   fi
 fi
 
-print "\nMailqivo installation completed."
+if (( SKIP_CODEX_RESTART )); then
+  print "\nMailqivo services are ready. Fully quit and reopen Codex to refresh its connection."
+else
+  print "\nMailqivo installation completed."
+fi
 print "Web console: $WEB_URL/"
 print "MCP: $MCP_URL"
 print "Codex navigation: Mailqivo"
-if [[ -n "$NEW_ADMIN_PASSWORD" ]]; then
-  print "Initial sign-in password: $NEW_ADMIN_PASSWORD"
-  print "Sign in and change it immediately. This password will not be shown again."
-fi
+print -r -- "For web sign-in, use the ADMIN_PASSWORD value in $ENV_FILE."

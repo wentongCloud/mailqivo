@@ -23,6 +23,15 @@ function clientLocale(): AppLocale {
   return parseAppLocale(match ? decodeURIComponent(match[1]!) : undefined);
 }
 
+function redirectExpiredSession(path: string, status: number) {
+  if (status !== 401 || typeof window === "undefined" || path === "/api/auth/login") return;
+  if (window.location.pathname === "/login") return;
+  const next = `${window.location.pathname}${window.location.search}`;
+  const login = new URL("/login", window.location.origin);
+  login.searchParams.set("next", next);
+  window.location.assign(`${login.pathname}${login.search}`);
+}
+
 /**
  * 调用 /api 的最小封装：同源请求（开发时经 next.config.ts 的 rewrites 转发到 apps/server），
  * 自动带 Cookie；非 2xx 时抛出 ApiError。后续任务在 lib/api/ 下基于它封装 TanStack Query hooks。
@@ -34,6 +43,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     headers.set("content-type", "application/json");
   }
   const res = await fetch(path, { credentials: "same-origin", ...init, headers });
+  redirectExpiredSession(path, res.status);
   const text = await res.text();
   const locale = clientLocale();
   let data: unknown;

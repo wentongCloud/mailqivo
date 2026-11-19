@@ -7,6 +7,11 @@ PNPM_BIN="${MAILQIVO_PNPM_BIN:-$(command -v pnpm 2>/dev/null || true)}"
 [[ -n "$PNPM_BIN" ]] || { print -u2 "pnpm was not found. Run the Codex installer again."; exit 1; }
 cd "$PROJECT_ROOT"
 
+# The server reads its authoritative token from the project .env. The GUI
+# launchd domain also exports MCP_TOKEN for Codex, but that value can be stale
+# while an existing desktop process is awaiting restart.
+unset MCP_TOKEN
+
 for attempt in {1..60}; do
   if node --input-type=module -e '
     import net from "node:net";

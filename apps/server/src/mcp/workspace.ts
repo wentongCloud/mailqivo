@@ -7,7 +7,7 @@ const workspaceLogo = "data:image/png;base64," +
 export const WORKSPACE_TOOL_NAME = "edm_workspace_open";
 export const WORKSPACE_OPEN_WEB_TOOL_NAME = "edm_workspace_open_web";
 export const WORKSPACE_WEB_URL = "http://127.0.0.1:18090/campaigns";
-export const WORKSPACE_RESOURCE_URI = "ui://mailqivo/workspace-v6";
+export const WORKSPACE_RESOURCE_URI = "ui://mailqivo/workspace-v7";
 export const WORKSPACE_MIME_TYPE = "text/html;profile=mcp-app";
 
 export const WORKSPACE_TOOL: Tool = {
@@ -117,7 +117,7 @@ export const WORKSPACE_HTML = String.raw`<!doctype html>
 
     <section class="cards" aria-label="Overview" data-i18n-label>
       <article class="card"><div class="label" data-i18n>All campaigns</div><div class="value" id="campaignTotal">—</div></article>
-      <article class="card"><div class="label" data-i18n>Active contacts</div><div class="value" id="contactTotal">—</div></article>
+      <article class="card"><div class="label" data-i18n>All contacts</div><div class="value" id="contactTotal">—</div></article>
       <article class="card"><div class="label" data-i18n>Unhandled replies</div><div class="value" id="replyTotal">—</div></article>
       <article class="card"><div class="label" data-i18n>Available attachments</div><div class="value" id="assetTotal">—</div></article>
     </section>
@@ -151,7 +151,7 @@ export const WORKSPACE_HTML = String.raw`<!doctype html>
         "Refresh": "刷新",
         "Overview": "概览",
         "All campaigns": "全部活动",
-        "Active contacts": "有效联系人",
+        "All contacts": "全部联系人",
         "Unhandled replies": "未处理回函",
         "Available attachments": "可用附件",
         "Workspace navigation": "工作区导航",
@@ -335,7 +335,7 @@ export const WORKSPACE_HTML = String.raw`<!doctype html>
         refreshButton.disabled = true; notice.classList.remove("show");
         return Promise.all([
           tool("edm_campaign_list", { page: 1, page_size: 20 }),
-          tool("edm_contact_search", { filter: { statuses: ["active"], exclude_domain_suspect: false }, page: 1, page_size: 20 }),
+          tool("edm_contact_search", { filter: { statuses: ["active", "invalid", "bounced", "unsubscribed"], exclude_domain_suspect: false }, page: 1, page_size: 20 }),
           tool("edm_reply_list", { handled: false, page: 1, page_size: 20 }),
           tool("edm_asset_list", { enabled: true, page: 1, page_size: 20 })
         ]).then(function (results) {
@@ -381,7 +381,7 @@ export const WORKSPACE_HTML = String.raw`<!doctype html>
 
       request("ui/initialize", {
         protocolVersion: "2026-01-26",
-        appInfo: { name: "mailqivo-workspace", version: "1.1.0" },
+        appInfo: { name: "mailqivo-workspace", version: "1.1.1" },
         appCapabilities: { availableDisplayModes: ["fullscreen"] }
       }).then(function (result) {
         if (result.hostContext && result.hostContext.locale) setLocale(result.hostContext.locale);

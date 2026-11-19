@@ -71,17 +71,25 @@ done
 /bin/launchctl bootstrap "$DOMAIN" "$LAUNCH_AGENTS_DIR/com.mailqivo.postgres.plist"
 /bin/launchctl kickstart -k "$DOMAIN/com.mailqivo.postgres"
 
+cd "$PROJECT_ROOT/apps/server"
+unset DATABASE_URL
 for attempt in {1..60}; do
-  if "$NODE_BIN" --input-type=module -e '
-    import net from "node:net";
-    const socket = net.createConnection({ host: "127.0.0.1", port: 5432 });
-    socket.once("connect", () => { socket.destroy(); process.exit(0); });
-    socket.once("error", () => process.exit(1));
-    setTimeout(() => { socket.destroy(); process.exit(1); }, 500);
+  if "$NODE_BIN" --env-file="$PROJECT_ROOT/.env" --input-type=module -e '
+    import pg from "pg";
+    if (!process.env.DATABASE_URL) process.exit(1);
+    const client = new pg.Client({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 1000, query_timeout: 1000 });
+    try {
+      await client.connect();
+      await client.query("SELECT 1");
+    } catch {
+      process.exitCode = 1;
+    } finally {
+      await client.end().catch(() => {});
+    }
   '; then
     break
   fi
-  [[ "$attempt" -lt 60 ]] || { print -u2 "PostgreSQL did not become ready within 60 seconds."; exit 1; }
+  [[ "$attempt" -lt 60 ]] || { print -u2 "Could not query the configured Mailqivo database after 60 attempts."; exit 1; }
   sleep 1
 done
 

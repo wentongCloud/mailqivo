@@ -6,7 +6,7 @@
   "type": "module",
   "packageManager": "pnpm@11.28.5",
   "engines": {
-    "node": ">=22"
+    "node": "^22.13.0 || >=24"
   },
   "scripts": {
     "dev": "pnpm --filter @mailqivo/server --filter @mailqivo/web --parallel dev",

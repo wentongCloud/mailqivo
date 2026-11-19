@@ -1,6 +1,6 @@
 {
   "name": "mailqivo",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Draft one campaign in Codex, preview personalized emails, send after you approve, and track results and replies.",
   "author": {
     "name": "wentong cloud"
