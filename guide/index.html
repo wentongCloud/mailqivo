@@ -27,9 +27,10 @@
     <h2>Set up the workspace</h2>
     <p>Follow the <a href="../README.md">installation instructions</a> or run the <a href="../demo/README.md">sample workspace</a>. Open Mailqivo from Codex or sign in to the web console.</p>
     <ol>
-      <li>Open Settings and review restricted phrases and the large-audience warning under Send checks.</li>
-      <li>Open Sending channels to configure the sender address, SMTP delivery, and optional IMAP reply polling.</li>
-      <li>Open People to add or import the intended audience.</li>
+      <li>Use the <strong>Language</strong> menu to select <strong>English (UK)</strong>. The button names in this guide follow that interface.</li>
+      <li>Open <strong>Settings</strong> → <strong>Sending channels</strong> → <strong>New channel</strong>. Configure your sender and SMTP settings. Add IMAP settings if you want to retrieve replies.</li>
+      <li>Under <strong>Send checks</strong>, review <strong>Sensitive words</strong> and the <strong>Large-audience warning threshold</strong>.</li>
+      <li>Open <strong>People</strong> to add contacts or import them from Excel or CSV.</li>
     </ol>
     <figure><img src="screenshots/compliance.jpg" alt="Send checks settings in the demo console"><figcaption>Review content and audience checks in Settings.</figcaption></figure>
     <figure><img src="screenshots/channels.jpg" alt="Sending channels listing the Demo only channel"><figcaption>The demo uses a disconnected channel with fictional settings.</figcaption></figure>
@@ -37,19 +38,20 @@
   <section id="campaign">
     <h2>Prepare and preview a campaign</h2>
     <ol>
-      <li>Open Campaign list and create a draft. Choose the channel and intended recipients.</li>
-      <li>Enter the subject and body. Insert contact placeholders where needed.</li>
-      <li>Save the draft. In Codex, ask Mailqivo to preview the campaign for sample contacts, then review each resolved subject and body.</li>
+      <li>Open <strong>Campaign list</strong> → <strong>New campaign</strong>. In <strong>Basics</strong>, enter the campaign name and subject, choose a sending channel, and select <strong>Send immediately</strong> or <strong>Schedule send</strong>. Select <strong>Next</strong>.</li>
+      <li>In <strong>Audience</strong>, choose an industry or an audience tag as needed. Select <strong>Confirm search</strong> when prompted. Review <strong>Search results</strong>, add or remove contacts as needed, and select <strong>Next</strong>. Changing the filters and confirming again resets manual additions and removals.</li>
+      <li>In <strong>Content</strong>, edit the subject and body. Use <strong>Insert variable</strong> for contact-specific text, then select <strong>Save draft</strong>.</li>
+      <li>In Codex, ask Mailqivo to preview the saved campaign for sample contacts. Review each personalized subject and body before delivery.</li>
     </ol>
     <figure><img src="screenshots/campaign.jpg" alt="The Basics step of the workshop campaign"><figcaption>Choose the channel and review the subject in Basics.</figcaption></figure>
     <figure><img src="screenshots/audience.jpg" alt="The Audience step with fictional workshop contacts"><figcaption>Review who will receive the campaign under Audience.</figcaption></figure>
     <figure><img src="screenshots/content.jpg" alt="The Content step showing the workshop message and contact placeholders"><figcaption>Edit the message and save the draft under Content.</figcaption></figure>
-    <p>Stop at preview in the sample workspace. In a configured sending workspace, review the recipients and message before approving delivery.</p>
+    <p>In the sample workspace, stop at preview. In a live workspace, <strong>Test send</strong> delivers a real email to the test address you enter. To send the campaign from the web console, choose <strong>Send</strong>, review the schedule, audience, and channel quota, then select <strong>Confirm send</strong>.</p>
   </section>
   <section id="results">
     <h2>Review results and replies</h2>
     <p>For unsubscribe links, use the <a href="unsubscribe.md">local demo and self-hosting instructions</a>. The hosted WentongCloud unsubscribe service serves WentongCloud campaigns.</p>
-    <p>Open the campaign to review queued and completed delivery records. Open Replies to review matched messages. Ask Mailqivo in Codex to summarize unhandled replies and suggest follow-up.</p>
+    <p>From <strong>Campaign list</strong>, open a campaign to review its status and delivery totals. In <strong>Replies</strong>, select a message to read it, then use <strong>Mark handled</strong> once you have reviewed it. You can also ask Mailqivo in Codex to summarize unhandled replies and suggest follow-up.</p>
     <figure><img src="screenshots/results.jpg" alt="Workshop draft with zero mail delivery records"><figcaption>Use the campaign detail page to review its status and delivery totals.</figcaption></figure>
   </section>
 </main>

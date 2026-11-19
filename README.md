@@ -3,7 +3,7 @@
 Mailqivo is a local Codex plugin for drafting personalized email campaigns, reviewing recipient-specific previews, and following campaign results and replies.
 
 - [Product design](guide/product-design.md)
-- [Browser user guide](guide/index.html)
+- [Browser user guide](guide/index.html). To view the formatted guide with screenshots, [download the current source ZIP](https://github.com/wentongCloud/mailqivo/archive/refs/heads/main.zip), extract it, and open `guide/index.html` in your browser.
 - [Sample workspace](demo/README.md)
 - [Unsubscribe demo and self-hosting](guide/unsubscribe.md)
 - [Website](https://docsintel.com)
