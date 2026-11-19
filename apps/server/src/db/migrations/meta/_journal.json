@@ -71,6 +71,13 @@
       "when": 1795070099302,
       "tag": "0009_perf_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795075634000,
+      "tag": "0010_campaign_soft_delete",
+      "breakpoints": true
     }
   ]
 }

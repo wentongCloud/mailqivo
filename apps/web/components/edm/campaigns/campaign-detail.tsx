@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { DeleteCampaignButton } from "./delete-campaign-button";
 import { Area, AreaChart, CartesianGrid, Label, Pie, PieChart, XAxis, YAxis } from "recharts";
 import { format, parseISO, type Locale } from "date-fns";
 import { ArrowLeft, CircleStop, Edit, Info, Pause, Play, RotateCcw } from "lucide-react";
@@ -120,6 +122,7 @@ function RequeueUnknownBody({ id, onDone }: { id: string; onDone: () => void }) 
 }
 
 export function CampaignDetail({ id }: { id: string }) {
+  const router = useRouter();
   const t = useTranslations("CampaignDetail");
   const labels = useLocalizedLabels();
   const campaign = useCampaign(id);
@@ -153,6 +156,7 @@ export function CampaignDetail({ id }: { id: string }) {
       {campaign.data.status === "sending" && <Button variant="outline" onClick={async () => { try { await pause.mutateAsync({}); toast.success("活动已暂停"); } catch (error) { toast.error(error instanceof ApiError ? error.message : "暂停失败"); } }}><Pause />暂停</Button>}
       {campaign.data.status === "paused" && <Button variant="outline" onClick={async () => { try { await resume.mutateAsync({}); toast.success("活动已恢复"); } catch (error) { toast.error(error instanceof ApiError ? error.message : "恢复失败"); } }}><Play />恢复</Button>}
       {stats.data.unknown > 0 && ["sending", "paused", "completed"].includes(campaign.data.status) && <Button variant="outline" onClick={() => setRequeueOpen(true)}><RotateCcw />重新发送状态未知（{stats.data.unknown}）</Button>}
+      <DeleteCampaignButton campaign={campaign.data} onDeleted={() => router.replace("/campaigns")} />
       {mutable && <Button variant="destructive" onClick={() => { setCancelToken(undefined); setCancelSummary(undefined); setCancelOpen(true); }}><CircleStop />取消活动</Button>}
     </div></div>
     <CampaignStatCards stats={stats.data} />

@@ -81,7 +81,7 @@ export function campaignToDto(row: CampaignRow): CampaignDto {
 }
 
 export async function getCampaignRow(db: Db, id: string): Promise<CampaignRow> {
-  const [row] = await db.select().from(campaigns).where(eq(campaigns.id, id));
+  const [row] = await db.select().from(campaigns).where(and(eq(campaigns.id, id), isNull(campaigns.deleted_at)));
   if (!row) throw Errors.notFound("活动不存在");
   return row;
 }
@@ -94,6 +94,7 @@ export type CampaignListFilter = { status?: CampaignStatus; created_from?: strin
 
 export async function listCampaigns(db: Db, page: PageParams, filter: CampaignListFilter = {}) {
   const where = and(
+    isNull(campaigns.deleted_at),
     filter.status ? eq(campaigns.status, filter.status) : undefined,
     filter.created_from ? gte(campaigns.created_at, new Date(filter.created_from)) : undefined,
     filter.created_to ? lte(campaigns.created_at, new Date(filter.created_to)) : undefined
@@ -168,9 +169,18 @@ export async function updateCampaign(db: Db, id: string, body: CampaignBody, con
 }
 
 export async function deleteCampaign(db: Db, id: string) {
-  const row = await getCampaignRow(db, id);
-  if (row.status !== "draft") throw Errors.invalidState("只有草稿状态的活动可以删除");
-  await db.delete(campaigns).where(eq(campaigns.id, id));
+  await db.transaction(async (trx) => {
+    const where = and(eq(campaigns.id, id), isNull(campaigns.deleted_at));
+    const [row] = await trx.select({ status: campaigns.status }).from(campaigns).where(where).for("update");
+    if (!row) throw Errors.notFound("活动不存在");
+    if (row.status === "draft") {
+      await trx.delete(campaigns).where(where);
+    } else if (row.status === "completed") {
+      await trx.update(campaigns).set({ deleted_at: new Date() }).where(where);
+    } else {
+      throw Errors.invalidState("只有草稿或已完成的活动可以删除");
+    }
+  });
 }
 
 async function resolveChannel(db: Db, row: CampaignRow): Promise<ChannelRow> {

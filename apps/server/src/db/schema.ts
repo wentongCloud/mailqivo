@@ -301,6 +301,7 @@ export const campaigns = pgTable(
     send_at: timestamptz(),
     started_at: timestamptz(),
     finished_at: timestamptz(),
+    deleted_at: timestamptz(),
     created_at: createdAt(),
     updated_at: createdAt()
   },

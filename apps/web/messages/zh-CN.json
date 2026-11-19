@@ -279,8 +279,9 @@
     "empty": "暂无活动。",
     "totalCount": "共 {count} 个活动",
     "deleted": "活动已删除",
-    "deleteConfirmTitle": "删除活动草稿？",
-    "deleteConfirmDesc": "删除“{name}”后无法恢复。"
+    "deleteConfirmTitle": "删除活动？",
+    "deleteConfirmDesc": "删除“{name}”后无法恢复。",
+    "deleteCompletedDesc": "将从活动列表移除“{name}”。历史邮件记录会保留，收件人仍可通过原邮件退订。"
   },
   "CampaignDetail": {
     "backToList": "活动列表",

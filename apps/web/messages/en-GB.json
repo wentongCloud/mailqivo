@@ -279,8 +279,9 @@
     "empty": "No campaigns yet.",
     "totalCount": "{count} campaigns",
     "deleted": "Campaign deleted",
-    "deleteConfirmTitle": "Delete draft campaign?",
-    "deleteConfirmDesc": "Delete “{name}? This cannot be undone."
+    "deleteConfirmTitle": "Delete campaign?",
+    "deleteConfirmDesc": "Delete “{name}”? This cannot be undone.",
+    "deleteCompletedDesc": "Remove “{name}” from the campaign list? Message history will be kept and existing unsubscribe links will continue to work."
   },
   "CampaignDetail": {
     "backToList": "Campaign list",
