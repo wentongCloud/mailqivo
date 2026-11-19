@@ -7,6 +7,7 @@ ENV_FILE="$PROJECT_ROOT/.env"
 PLUGIN_ROOT="$PROJECT_ROOT/codex-marketplace/plugins/mailqivo"
 MARKETPLACE_ROOT="$PROJECT_ROOT/codex-marketplace"
 LOCK_DIR="$PROJECT_ROOT/.service/install.lock"
+STARTER_DATA_PENDING="$PROJECT_ROOT/.service/starter-data.pending"
 WEB_URL="http://127.0.0.1:18090"
 MCP_URL="http://127.0.0.1:18091/mcp"
 SKIP_CODEX_RESTART=0
@@ -73,7 +74,7 @@ for required in package.json pnpm-lock.yaml .env.example \
   codex-marketplace/.agents/plugins/marketplace.json \
   codex-marketplace/plugins/mailqivo/.codex-plugin/plugin.json \
   codex-marketplace/plugins/mailqivo/.mcp.json \
-  scripts/service/install-macos.sh; do
+  scripts/service/install-macos.sh demo/config.mjs demo/seed.mjs; do
   [[ -f "$PROJECT_ROOT/$required" ]] || fail "Required file is missing: $required"
 done
 
@@ -172,6 +173,9 @@ cd "$PROJECT_ROOT"
   'import "./src/env.ts"; import { loadConfig } from "./src/config.ts"; loadConfig();'
 
 step "Installing and starting background services"
+if [[ ! -e "$PROJECT_ROOT/.pgdata/PG_VERSION" ]]; then
+  touch "$STARTER_DATA_PENDING"
+fi
 MAILQIVO_PNPM_BIN="$PNPM_BIN" \
 MAILQIVO_RUNTIME_PATH="${NODE_BIN:h}:${PNPM_BIN:h}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
   /bin/zsh "$PROJECT_ROOT/scripts/service/install-macos.sh"
@@ -194,6 +198,11 @@ wait_http() {
 
 wait_http "Mailqivo API" "http://127.0.0.1:18091/healthz" "200"
 wait_http "Mailqivo Web" "http://127.0.0.1:18090/login" "200"
+if [[ -f "$STARTER_DATA_PENDING" ]]; then
+  step "Loading starter data"
+  "$NODE_BIN" "$PROJECT_ROOT/demo/seed.mjs" --install
+  rm "$STARTER_DATA_PENDING"
+fi
 
 cd "$PROJECT_ROOT/apps/server"
 MCP_TOKEN="$MCP_TOKEN_VALUE" "$NODE_BIN" --input-type=module -e '

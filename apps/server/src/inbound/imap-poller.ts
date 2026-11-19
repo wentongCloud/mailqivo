@@ -80,6 +80,7 @@ export async function pollAllChannels(db: Db, runtime: InboundRuntime & ChannelR
   for (const row of rows) {
     try {
       const config = await getChannelImapConfig(db, row.id, runtime);
+      if (!config.user && !config.pass) continue;
       const result = await pollInboundSource(db, runtime, row.id, createImapSource(config), classifier);
       processed += result.processed;
     } catch (error) {
