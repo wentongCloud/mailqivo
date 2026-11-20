@@ -16,6 +16,7 @@ import {
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { z, ZodError } from "zod";
 import { AppError, Errors, parseOrThrow } from "../lib/errors.ts";
+import { APP_VERSION } from "../version.ts";
 import { MCP_TOOLS, type McpContext, type McpTool } from "./tools.ts";
 import {
   WORKSPACE_HTML,
@@ -51,7 +52,7 @@ export function openWorkspaceWeb(platform = process.platform, run = execFileAsyn
 }
 
 export function createMcpServer(ctx: McpContext, log: { error: (obj: unknown, msg: string) => void }): Server {
-  const server = new Server({ name: "mailqivo", version: "0.2.7" }, { capabilities: { tools: {}, resources: {} } });
+  const server = new Server({ name: "mailqivo", version: APP_VERSION }, { capabilities: { tools: {}, resources: {} } });
   const tools = new Map(MCP_TOOLS.map((tool) => [tool.name as string, tool]));
   const listed: Tool[] = [
     ...MCP_TOOLS.map((tool) => ({ name: tool.name, description: tool.description, inputSchema: inputSchemaOf(tool) as { type: "object" } })),

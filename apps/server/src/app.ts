@@ -1,11 +1,9 @@
-import fs from "node:fs";
-import path from "node:path";
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
 import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
 import { createLlmClient, type LlmClient } from "./ai/llm-client.ts";
 import type { Config } from "./config.ts";
-import { REPO_ROOT } from "./env.ts";
+import { APP_VERSION } from "./version.ts";
 import { createDb, type Db } from "./db/client.ts";
 import { registerErrorHandlers } from "./lib/errors.ts";
 import { localeFromRequest } from "./lib/locale.ts";
@@ -60,8 +58,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_request, body, done) => done(null, body));
 
   // 运行验收用 version 核对实际运行的应用版本（版本更新 §7）。
-  const version = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")).version as string;
-  app.get("/healthz", async () => ({ ok: true, version }));
+  app.get("/healthz", async () => ({ ok: true, version: APP_VERSION }));
 
   for (const mod of routeModules) {
     await app.register(mod.plugin, { prefix: mod.prefix });
