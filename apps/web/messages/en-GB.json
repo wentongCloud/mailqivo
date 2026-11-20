@@ -1115,6 +1115,7 @@
   "Update": {
     "title": "Updates",
     "description": "Confirm once to upgrade the local Mailqivo app and the Codex plugin, then follow the progress and result.",
+    "checkFailed": "The check failed. Select Check again to retry",
     "recheck": "Check again",
     "component": "Component",
     "installed": "Installed",
@@ -1133,6 +1134,9 @@
     "sendingHint": "{count} campaigns are sending. In-flight messages finish before the services stop, and sending resumes after the restart.",
     "upgrade": "Upgrade",
     "confirmTitle": "Upgrade now?",
+    "noRollback": "The database is backed up first, then the program is replaced in full. Migrations run on the current database and cannot return to the previous version.",
+    "notices": "These do not block the update",
+    "warnings": "Recorded non-fatal errors",
     "backupDatabase": "The database is backed up first",
     "noBackupDatabase": "No migrations, so no database backup",
     "noDowntime": "Plugin only: no service interruption",
@@ -1167,6 +1171,7 @@
       "verify_candidate": "Candidate checks",
       "backup_files": "Back up files",
       "stop_services": "Stop web and API",
+      "backup": "Back up the database",
       "backup_database": "Stop and back up database",
       "apply_files": "Replace files",
       "install": "Install dependencies",
@@ -1190,6 +1195,11 @@
       "LOCAL_CHANGES": "The running directory has local changes",
       "TASK_RUNNING": "An update task is still running",
       "CAMPAIGN_PREPARING": "A campaign is being prepared for sending"
+    },
+    "notice": {
+      "CODEX_UNAVAILABLE": "The Codex plugin state could not be read. The update still continues, and the plugin result is only recorded",
+      "PLUGIN_DOWNGRADE": "The candidate plugin version is lower than the installed one. The installed plugin stays as it is",
+      "PLUGIN_CONTENT_UNVERSIONED": "The plugin content changed without a version increase. This update does not replace the plugin"
     }
   }
 }

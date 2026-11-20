@@ -7,6 +7,7 @@ export declare function isTaskId(id: unknown): id is string;
 export declare function taskDir(runDir: string, id: string): string;
 export declare function writeJsonAtomic(file: string, value: unknown): void;
 export declare function readTaskStatus(runDir: string, id: string): UpdateTaskStatus | null;
+export declare function isTaskAlive(status: UpdateTaskStatus): boolean;
 export declare function effectiveTaskStatus(status: UpdateTaskStatus): UpdateTaskStatus;
 export declare function currentTask(runDir: string): string | null;
 export declare function releaseCurrentTask(runDir: string, id: string): void;

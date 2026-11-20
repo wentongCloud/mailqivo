@@ -3,8 +3,6 @@ import type { ConfirmChallenge, UpdateCheck, UpdateSummary, UpdateTaskStatus } f
 import { ApiError, apiFetch } from "@/lib/api/client";
 
 export type UpdateConfirmResponse = ConfirmChallenge<UpdateSummary> | { task_id: string };
-export type RollbackSummary = { task_id: string; app: { now: string | null; restore_to: string | null }; restore_database: boolean; may_resend: boolean };
-export type RollbackResponse = ConfirmChallenge<RollbackSummary> | { task_id: string };
 
 const ACTIVE: UpdateTaskStatus["state"][] = ["queued", "running"];
 export const isTaskActive = (task?: UpdateTaskStatus | null) => !!task && ACTIVE.includes(task.state);
@@ -32,21 +30,5 @@ export function useConfirmUpdate() {
     mutationFn: (confirm_token?: string) =>
       apiFetch<UpdateConfirmResponse>("/api/system/update", { method: "POST", body: JSON.stringify(confirm_token ? { confirm_token } : {}) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["update-check"] })
-  });
-}
-
-export function useRetryPlugin() {
-  return useMutation({
-    mutationFn: (id: string) => apiFetch<{ task_id: string }>(`/api/system/update/tasks/${id}/retry-plugin`, { method: "POST", body: "{}" })
-  });
-}
-
-export function useRollbackUpdate() {
-  return useMutation({
-    mutationFn: ({ id, confirm_token }: { id: string; confirm_token?: string }) =>
-      apiFetch<RollbackResponse>(`/api/system/update/tasks/${id}/rollback`, {
-        method: "POST",
-        body: JSON.stringify(confirm_token ? { confirm_token } : {})
-      })
   });
 }

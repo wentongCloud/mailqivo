@@ -6,9 +6,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { UPDATE_STAGE_VALUES, type UpdateSummary, type UpdateTaskStatus } from "@mailqivo/shared";
 import { ApiError } from "@/lib/api/client";
-import {
-  isTaskActive, useConfirmUpdate, useRetryPlugin, useRollbackUpdate, useUpdateCheck, useUpdateTask, type RollbackSummary
-} from "@/lib/api/update";
+import { isTaskActive, useConfirmUpdate, useUpdateCheck, useUpdateTask } from "@/lib/api/update";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
@@ -81,7 +79,13 @@ export function UpdateManager() {
           </Button>
         </CardHeader>
         <CardContent className="space-y-4">
-          {!data ? <Skeleton className="h-32" /> : (
+          {!data && check.isError ? (
+            <Alert variant="destructive">
+              <CircleAlert />
+              <AlertTitle>{t("checkFailed")}</AlertTitle>
+              <AlertDescription>{check.error instanceof ApiError ? check.error.message : tc("failed")}</AlertDescription>
+            </Alert>
+          ) : !data ? <Skeleton className="h-32" /> : (
             <>
               <Table>
                 <TableHeader><TableRow><TableHead>{t("component")}</TableHead><TableHead>{t("installed")}</TableHead><TableHead>{t("candidate")}</TableHead></TableRow></TableHeader>
@@ -95,6 +99,19 @@ export function UpdateManager() {
                 </TableBody>
               </Table>
               <p className="text-muted-foreground text-sm">{t("source", { dir: data.source.dir ?? "—", commit: data.source.commit?.slice(0, 12) ?? "—" })}</p>
+              {data.notices.length > 0 && (
+                <Alert>
+                  <CircleAlert />
+                  <AlertTitle>{t("notices")}</AlertTitle>
+                  <AlertDescription>
+                    <ul className="list-disc space-y-1 pl-4">
+                      {data.notices.map((notice) => (
+                        <li key={notice.code}>{t(`notice.${notice.code}`)}{notice.items?.length ? `: ${notice.items.slice(0, 8).join(", ")}` : ""}</li>
+                      ))}
+                    </ul>
+                  </AlertDescription>
+                </Alert>
+              )}
               {data.blockers.length > 0 && (
                 <Alert variant="destructive">
                   <CircleAlert />
@@ -125,7 +142,7 @@ export function UpdateManager() {
         </CardContent>
       </Card>
 
-      {taskId && <TaskCard task={task.data} reconnecting={task.isFetching && task.failureCount > 0 || task.isError} onFollow={follow} />}
+      {taskId && <TaskCard task={task.data} reconnecting={task.isFetching && task.failureCount > 0 || task.isError} />}
 
       <AlertDialog open={!!challenge} onOpenChange={(open) => { if (!open) setChallenge(null); }}>
         <AlertDialogContent>
@@ -138,7 +155,7 @@ export function UpdateManager() {
                   <li>{t("plugin")}: {challenge.summary.plugin.installed ?? t("notInstalled")} → {challenge.summary.plugin.candidate}</li>
                   <li>{t("files", challenge.summary.files)}</li>
                   <li>{challenge.summary.migrations.length ? t("migrations", { list: challenge.summary.migrations.join(", ") }) : t("noMigrations")}</li>
-                  <li>{challenge.summary.backup_database ? t("backupDatabase") : t("noBackupDatabase")}</li>
+                  <li>{t("noRollback")}</li>
                   <li>{challenge.summary.files.added + challenge.summary.files.modified + challenge.summary.files.removed === 0
                     ? t("noDowntime")
                     : challenge.summary.estimated_downtime_sec != null
@@ -166,33 +183,12 @@ function StageIcon({ result, current }: { result?: "ok" | "skipped" | "failed"; 
   return <CircleDashed className="text-muted-foreground size-4" />;
 }
 
-function TaskCard({ task, reconnecting, onFollow }: { task?: UpdateTaskStatus; reconnecting: boolean; onFollow: (id: string) => void }) {
+function TaskCard({ task, reconnecting }: { task?: UpdateTaskStatus; reconnecting: boolean }) {
   const t = useTranslations("Update");
-  const tc = useTranslations("Common");
-  const retry = useRetryPlugin();
-  const rollback = useRollbackUpdate();
-  const [rollbackOpen, setRollbackOpen] = React.useState(false);
-  const [rollbackChallenge, setRollbackChallenge] = React.useState<Challenge<RollbackSummary> | null>(null);
   if (!task) return <Card><CardContent className="text-muted-foreground flex items-center gap-2 py-6 text-sm"><Loader2 className="size-4 animate-spin" />{t("reconnecting")}</CardContent></Card>;
 
   const results = new Map(task.stages.map((stage) => [stage.name, stage]));
-  const pluginFailed = results.get("plugin")?.result === "failed";
-  const pluginDone = results.get("plugin")?.result === "ok";
-
-  async function retryPlugin() {
-    try { onFollow((await retry.mutateAsync(task!.id)).task_id); } catch (error) { toast.error(error instanceof ApiError ? error.message : tc("failed")); }
-  }
-  async function confirmRollback() {
-    try {
-      const result = await rollback.mutateAsync({ id: task!.id, confirm_token: rollbackChallenge?.token });
-      if ("confirm_token" in result) { setRollbackChallenge({ token: result.confirm_token, summary: result.summary }); return; }
-      setRollbackOpen(false); setRollbackChallenge(null); onFollow(result.task_id);
-    } catch (error) {
-      const renewed = renewedChallenge<RollbackSummary>(error);
-      if (renewed) { setRollbackChallenge(renewed); toast.info(tc("confirmAgain")); return; }
-      toast.error(error instanceof ApiError ? error.message : tc("failed"));
-    }
-  }
+  const pluginUpdated = task.plugin.now != null && task.plugin.now === task.plugin.target && task.plugin.before !== task.plugin.now;
 
   return (
     <Card>
@@ -219,30 +215,19 @@ function TaskCard({ task, reconnecting, onFollow }: { task?: UpdateTaskStatus; r
             <p>{t("resultPlugin", { before: task.plugin.before ?? "—", target: task.plugin.target ?? "—", now: task.plugin.now ?? "—" })}</p>
             {task.downtime_sec != null && <p>{t("downtimeActual", { seconds: task.downtime_sec })}</p>}
             {task.error && <p className="text-destructive">{task.error}</p>}
-            {pluginDone && <Alert><AlertDescription>{t("restartCodex")}</AlertDescription></Alert>}
-            <div className="flex flex-wrap gap-2">
-              {task.state === "partial" && pluginFailed && <Button variant="outline" onClick={() => void retryPlugin()} disabled={retry.isPending}>{t("retryPlugin")}</Button>}
-              {task.state === "partial" && task.backup_dir && <Button variant="outline" onClick={() => setRollbackOpen(true)}>{t("rollback")}</Button>}
-            </div>
+            {(task.warnings ?? []).length > 0 && (
+              <Alert>
+                <CircleAlert />
+                <AlertTitle>{t("warnings")}</AlertTitle>
+                <AlertDescription>
+                  <ul className="list-disc space-y-1 pl-4">{(task.warnings ?? []).map((warning) => <li key={warning}>{warning}</li>)}</ul>
+                </AlertDescription>
+              </Alert>
+            )}
+            {pluginUpdated && <Alert><AlertDescription>{t("restartCodex")}</AlertDescription></Alert>}
           </div>
         )}
       </CardContent>
-      <AlertDialog open={rollbackOpen} onOpenChange={(open) => { setRollbackOpen(open); if (!open) setRollbackChallenge(null); }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("rollbackTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>{t("rollbackDesc", { version: task.app.before ?? "—" })}</AlertDialogDescription>
-          </AlertDialogHeader>
-          {task.database_backed_up && <Alert><CircleAlert /><AlertDescription>{t("restoreDatabase")}</AlertDescription></Alert>}
-          {rollbackChallenge?.summary.may_resend && <Alert variant="destructive"><CircleAlert /><AlertDescription>{t("mayResend")}</AlertDescription></Alert>}
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={rollback.isPending}>{tc("cancel")}</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" disabled={rollback.isPending} onClick={(event) => { event.preventDefault(); void confirmRollback(); }}>
-              {rollbackChallenge ? tc("confirm") : t("rollback")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </Card>
   );
 }

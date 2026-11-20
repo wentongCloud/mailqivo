@@ -1115,6 +1115,7 @@
   "Update": {
     "title": "版本更新",
     "description": "确认一次即升级本机 Mailqivo 应用与 Codex 插件，并显示进度与结果。",
+    "checkFailed": "检查失败，请点击「重新检查」重试",
     "recheck": "重新检查",
     "component": "组件",
     "installed": "已安装",
@@ -1133,6 +1134,9 @@
     "sendingHint": "有 {count} 个活动正在发送：停止服务时进行中的邮件会先发完，重启后继续发送。",
     "upgrade": "升级",
     "confirmTitle": "确认升级？",
+    "noRollback": "先备份数据库，再全量替换程序。迁移在当前数据库上执行，不能回到旧版本。",
+    "notices": "以下情况不阻止更新",
+    "warnings": "已记录的非致命错误",
     "backupDatabase": "更新前备份数据库",
     "noBackupDatabase": "无迁移，不备份数据库",
     "noDowntime": "只更新插件，服务不中断",
@@ -1167,6 +1171,7 @@
       "verify_candidate": "候选验收",
       "backup_files": "备份文件",
       "stop_services": "停止 Web 与 API",
+      "backup": "备份数据库",
       "backup_database": "停止并备份数据库",
       "apply_files": "替换文件",
       "install": "安装依赖",
@@ -1190,6 +1195,11 @@
       "LOCAL_CHANGES": "运行目录有本机修改",
       "TASK_RUNNING": "已有未结束的更新任务",
       "CAMPAIGN_PREPARING": "有活动正在准备发送"
+    },
+    "notice": {
+      "CODEX_UNAVAILABLE": "无法读取 Codex 插件状态。更新仍会继续，插件结果只作记录",
+      "PLUGIN_DOWNGRADE": "候选插件版本低于已安装版本，已安装插件保持不变",
+      "PLUGIN_CONTENT_UNVERSIONED": "插件内容已变但版本号未提高，本次不更换插件"
     }
   }
 }

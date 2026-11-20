@@ -5,14 +5,13 @@ import { z } from "zod";
 export const UPDATE_STAGE_VALUES = [
   "lock",
   "verify_candidate",
-  "backup_files",
   "stop_services",
-  "backup_database",
+  "backup",
   "apply_files",
   "install",
   "build",
-  "migrate",
   "start_services",
+  "migrate",
   "verify_running",
   "plugin",
   "finish"
@@ -24,10 +23,7 @@ export const UPDATE_BLOCKER_VALUES = [
   "SOURCE_NOT_CONFIGURED",
   "SOURCE_INVALID",
   "SOURCE_UNCOMMITTED",
-  "CODEX_UNAVAILABLE",
   "APP_DOWNGRADE",
-  "PLUGIN_DOWNGRADE",
-  "PLUGIN_CONTENT_UNVERSIONED",
   "MIGRATION_SKIPPED",
   "DATABASE_AHEAD",
   "LOCAL_CHANGES",
@@ -37,10 +33,19 @@ export const UPDATE_BLOCKER_VALUES = [
 export type UpdateBlockerCode = (typeof UPDATE_BLOCKER_VALUES)[number];
 export type UpdateBlocker = { code: UpdateBlockerCode; items?: string[] };
 
-export const UPDATE_TASK_MODE_VALUES = ["update", "plugin", "rollback"] as const;
+/** 不阻止更新、也不回退。更新完成后只记录。 */
+export const UPDATE_NOTICE_VALUES = [
+  "CODEX_UNAVAILABLE",
+  "PLUGIN_DOWNGRADE",
+  "PLUGIN_CONTENT_UNVERSIONED"
+] as const;
+export type UpdateNoticeCode = (typeof UPDATE_NOTICE_VALUES)[number];
+export type UpdateNotice = { code: UpdateNoticeCode; items?: string[] };
+
+export const UPDATE_TASK_MODE_VALUES = ["update"] as const;
 export type UpdateTaskMode = (typeof UPDATE_TASK_MODE_VALUES)[number];
 
-export const UPDATE_TASK_STATE_VALUES = ["queued", "running", "succeeded", "rolled_back", "partial", "failed"] as const;
+export const UPDATE_TASK_STATE_VALUES = ["queued", "running", "succeeded", "failed"] as const;
 export type UpdateTaskState = (typeof UPDATE_TASK_STATE_VALUES)[number];
 
 export type UpdateVersions = { installed: string | null; candidate: string | null };
@@ -51,11 +56,12 @@ export type UpdateCheck = {
   plugin: UpdateVersions & { enabled: boolean };
   files: { added: string[]; modified: string[]; removed: string[] };
   migrations: { pending: string[]; unknown_records: number };
-  backup_database: boolean;
   sending_campaigns: number;
   /** 上次成功更新的停机秒数；没有记录时为 null。 */
   estimated_downtime_sec: number | null;
   blockers: UpdateBlocker[];
+  /** 插件或 Codex 的情况。不阻止更新。 */
+  notices: UpdateNotice[];
   up_to_date: boolean;
   current_task: string | null;
   last_task: string | null;
@@ -68,7 +74,6 @@ export type UpdateSummary = {
   source_commit: string | null;
   files: { added: number; modified: number; removed: number };
   migrations: string[];
-  backup_database: boolean;
   sending_campaigns: number;
   estimated_downtime_sec: number | null;
   manifest_sha256: string;
@@ -76,10 +81,6 @@ export type UpdateSummary = {
 
 export const UpdateConfirmBody = z.object({ confirm_token: z.string().min(1).optional() }).strict();
 export type UpdateConfirmBody = z.infer<typeof UpdateConfirmBody>;
-
-/** 有数据库备份的任务（本次执行过迁移）回滚时必须同时恢复数据库，由服务端决定，不接受请求参数。 */
-export const UpdateRollbackBody = z.object({ confirm_token: z.string().min(1).optional() }).strict();
-export type UpdateRollbackBody = z.infer<typeof UpdateRollbackBody>;
 
 export type UpdateTaskStatus = {
   id: string;
@@ -92,9 +93,13 @@ export type UpdateTaskStatus = {
   app: { before: string | null; target: string | null; now: string | null };
   plugin: { before: string | null; target: string | null; now: string | null; enabled: boolean | null };
   downtime_sec: number | null;
-  /** 只在任务产生备份时出现，路径相对运行目录。 */
-  backup_dir: string | null;
-  database_backed_up: boolean;
+  /**
+   * 已停止服务并开始替换文件。此后进程退出也继续占着任务锁，
+   * 下次启动更新程序只继续这一次，直到候选版本就绪。
+   */
+  forward: boolean;
+  /** 就绪之后记录的非致命错误。不改变任务成败。 */
+  warnings: string[];
   /** 更新程序进程 id；任务开始执行时写入，用于判断进程是否仍在运行。 */
   pid: number | null;
   error: string | null;

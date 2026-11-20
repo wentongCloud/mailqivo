@@ -25,8 +25,8 @@ export const INSTALLED_MANIFEST = ".service/installed-manifest.json";
 export const UPDATES_DIR = ".service/updates";
 export const CURRENT_TASK_FILE = ".service/updates/current";
 export const UPDATER_FILES = ["apps/server/src/update/lib.mjs", "apps/server/src/update/updater.mjs"];
-/** 安装器固定的服务端口与 launchd 标签（scripts/install-codex.sh、ops/launchd/）。 */
-export const PORTS = { postgres: 5432, web: 18090, server: 18091 };
+/** 安装器固定的服务端口与 launchd 标签（scripts/install-codex.sh、ops/launchd/）。数据库端口取自 DATABASE_URL（databasePort）。 */
+export const PORTS = { web: 18090, server: 18091 };
 export const LABELS = {
   postgres: "com.mailqivo.postgres",
   server: "com.mailqivo.server",
@@ -75,14 +75,30 @@ export function compareVersions(a, b) {
   return 0;
 }
 
-/** 运行目录 `.env` 的键值（只在本机内存中使用，不得写入日志或状态）。 */
+/** dotenv 17 的单行规则（node_modules/dotenv/lib/main.js 的 LINE），逐字保留。 */
+const DOTENV_LINE = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg;
+
+/**
+ * 运行目录 `.env` 的键值（只在本机内存中使用，不得写入日志或状态）。
+ * 服务端用 dotenv 读取同一文件（src/env.ts）；这里按 dotenv 17 的 `parse` 解析（引号、注释、`export`、双引号内 `\n`），
+ * 使更新程序读到的值与服务端一致。本文件只依赖 Node 内置模块，因此不引入 dotenv。
+ */
 export function readEnvFile(dir) {
   const values = {};
-  for (const line of fs.readFileSync(path.join(dir, ".env"), "utf8").split(/\r?\n/)) {
-    const match = /^([A-Z0-9_]+)=(.*)$/.exec(line);
-    if (match) values[match[1]] = match[2];
+  const text = fs.readFileSync(path.join(dir, ".env"), "utf8").replace(/\r\n?/g, "\n");
+  for (const match of text.matchAll(DOTENV_LINE)) {
+    let value = (match[2] || "").trim();
+    const quote = value[0];
+    value = value.replace(/^(['"`])([\s\S]*)\1$/mg, "$2");
+    if (quote === '"') value = value.replace(/\\n/g, "\n").replace(/\\r/g, "\r");
+    values[match[1]] = value;
   }
   return values;
+}
+
+/** 数据库端口：与 `pnpm db:start`（apps/server/scripts/db-start.ts）同一来源，即 DATABASE_URL 的端口，未写端口时为 5432。 */
+export function databasePort(dir) {
+  return Number(new URL(readEnvFile(dir).DATABASE_URL).port || 5432);
 }
 
 /** 候选源（D1、D2）：已提交的 git 工作区。清单为 `git ls-files` 中非受保护文件的 sha256。 */
@@ -202,18 +218,33 @@ export function findCodex(env = process.env) {
   return null;
 }
 
+/** 子进程的进程组宽限后强制结束（SIGKILL）前的等待时间。 */
+const KILL_GRACE_MS = 10_000;
+
+/**
+ * 结束以 `detached: true` 启动的子进程及其整个进程组：先 SIGTERM，宽限期后仍未退出则 SIGKILL。
+ * 进程组已不存在时（ESRCH）忽略。
+ */
+export function killTree(child) {
+  const signal = (name) => { try { process.kill(-child.pid, name); } catch { /* 进程组已结束 */ } };
+  signal("SIGTERM");
+  const force = setTimeout(() => signal("SIGKILL"), KILL_GRACE_MS);
+  force.unref();
+  child.once("close", () => { clearTimeout(force); signal("SIGKILL"); });
+}
+
 /**
  * 运行 Codex CLI（stdin 关闭）。Codex 读取远程插件目录时可能很慢（本机实测 84 秒），超时即抛错，
- * 由调用方报告 CODEX_UNAVAILABLE，不能把「无法读取」当成「未安装」。
+ * 由调用方记为通知。不能把「无法读取」当成「未安装」，也不因此阻止应用更新。
  */
 export function runCodex(codexBin, args, timeoutMs) {
   return new Promise((resolve, reject) => {
     if (!codexBin) { reject(new Error("找不到 Codex CLI")); return; }
-    const child = spawn(codexBin, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(codexBin, args, { stdio: ["ignore", "pipe", "pipe"], detached: true });
     let stdout = "", stderr = "";
     child.stdout.on("data", (chunk) => { stdout += chunk; });
     child.stderr.on("data", (chunk) => { stderr = (stderr + chunk).slice(-2000); });
-    const timer = setTimeout(() => { child.kill("SIGTERM"); reject(new Error(`Codex CLI ${Math.round(timeoutMs / 1000)} 秒内无响应`)); }, timeoutMs);
+    const timer = setTimeout(() => { killTree(child); reject(new Error(`Codex CLI ${Math.round(timeoutMs / 1000)} 秒内无响应`)); }, timeoutMs);
     child.on("error", (error) => { clearTimeout(timer); reject(error); });
     child.on("close", (code) => {
       clearTimeout(timer);
@@ -254,8 +285,19 @@ export function isTaskAlive(status) {
   try { process.kill(status.pid, 0); return true; } catch (error) { return error?.code === "EPERM"; }
 }
 
-/** 对外显示的任务状态：进程已不存在却仍为 queued / running 的任务显示为 failed（不改写 status.json）。 */
+/** 换文件之后，即使更新程序已退出，这次任务也继续占锁，直到候选版本就绪。 */
+function occupiesLock(status) {
+  if (!status || status.state === "succeeded" || status.state === "failed") return false;
+  if (status.forward) return true;
+  return isTaskAlive(status);
+}
+
+/** 对外显示的任务状态。换文件前进程消失视为失败；换文件后保持进行中（不改写 status.json）。 */
 export function effectiveTaskStatus(status) {
+  if (status.forward && status.state === "running") {
+    if (isTaskAlive(status)) return status;
+    return { ...status, error: status.error ?? "更新程序已退出，候选版本尚未就绪。再次启动 com.mailqivo.updater 会继续这一次更新" };
+  }
   if ((status.state !== "queued" && status.state !== "running") || isTaskAlive(status)) return status;
   return { ...status, state: "failed", stage: null, error: status.error ?? "更新程序意外结束，任务未完成；请核对运行目录与服务状态后重新检查" };
 }
@@ -268,7 +310,7 @@ function readCurrentPointer(runDir) {
 export function currentTask(runDir) {
   const id = readCurrentPointer(runDir);
   const status = isTaskId(id) ? readTaskStatus(runDir, id) : null;
-  return status && isTaskAlive(status) ? id : null;
+  return status && occupiesLock(status) ? id : null;
 }
 
 /** 只在 `current` 仍指向给定任务时删除它，不删除其他任务的指针。 */
@@ -304,28 +346,29 @@ export async function computeCheck({ runDir, sourceDir, database, readPlugin = (
     plugin: { installed: plugin.installed, enabled: plugin.enabled, candidate: candidate.ok ? pluginVersion(sourceDir) : null },
     files: { added: [], modified: [], removed: [] },
     migrations: { pending: [], unknown_records: 0 },
-    backup_database: false,
     sending_campaigns: database.sending,
     estimated_downtime_sec: history.downtime,
     current_task: currentTask(runDir),
-    last_task: history.last
+    last_task: history.last,
+    notices: []
   };
   if (!candidate.ok) {
     blockers.push({ code: candidate.blocker, ...(candidate.error ? { items: [candidate.error] } : {}) });
     return { check: { ...base, blockers, up_to_date: false }, plan: null };
   }
-  if (codexError) blockers.push({ code: "CODEX_UNAVAILABLE", items: [codexError] });
+  const notices = [];
+  if (codexError) notices.push({ code: "CODEX_UNAVAILABLE", items: [codexError] });
   if (candidate.uncommitted.length) blockers.push({ code: "SOURCE_UNCOMMITTED", items: candidate.uncommitted });
   const files = await planFiles(runDir, sourceDir, candidate);
   const migrations = analyzeMigrations(readJournal(sourceDir), database.recordedCreatedAt);
   const appUpdate = files.added.length + files.modified.length + files.removed.length > 0;
-  const pluginUpdate = base.plugin.installed !== base.plugin.candidate || !base.plugin.enabled;
+  // 版本相同不执行 plugin add。版本变低不回退已安装插件。二者都不阻止应用更新。
+  const pluginDowngrade = !codexError && base.plugin.installed && compareVersions(base.plugin.candidate, base.plugin.installed) < 0;
+  const pluginUpdate = appUpdate && !pluginDowngrade && base.plugin.installed !== base.plugin.candidate;
   if (installedApp && compareVersions(base.app.candidate, installedApp) < 0) blockers.push({ code: "APP_DOWNGRADE", items: [`${installedApp} → ${base.app.candidate}`] });
-  if (!codexError && base.plugin.installed && compareVersions(base.plugin.candidate, base.plugin.installed) < 0) {
-    blockers.push({ code: "PLUGIN_DOWNGRADE", items: [`${base.plugin.installed} → ${base.plugin.candidate}`] });
-  }
+  if (pluginDowngrade) notices.push({ code: "PLUGIN_DOWNGRADE", items: [`${base.plugin.installed} → ${base.plugin.candidate}`] });
   if (base.plugin.installed && base.plugin.installed === base.plugin.candidate &&
-      !pluginCacheMatches(path.join(sourceDir, PLUGIN_DIR), base.plugin.candidate)) blockers.push({ code: "PLUGIN_CONTENT_UNVERSIONED" });
+      !pluginCacheMatches(path.join(sourceDir, PLUGIN_DIR), base.plugin.candidate)) notices.push({ code: "PLUGIN_CONTENT_UNVERSIONED" });
   if (migrations.skipped.length) blockers.push({ code: "MIGRATION_SKIPPED", items: migrations.skipped });
   if (migrations.databaseAhead) blockers.push({ code: "DATABASE_AHEAD" });
   if (files.localChanges.length) blockers.push({ code: "LOCAL_CHANGES", items: files.localChanges });
@@ -335,9 +378,9 @@ export async function computeCheck({ runDir, sourceDir, database, readPlugin = (
     ...base,
     files: { added: files.added, modified: files.modified, removed: files.removed },
     migrations: { pending: migrations.pending, unknown_records: migrations.unknownRecords },
-    backup_database: appUpdate && migrations.pending.length > 0,
     blockers,
-    up_to_date: !appUpdate && !pluginUpdate
+    notices,
+    up_to_date: !appUpdate
   };
   const plan = {
     commit: candidate.commit,
@@ -359,7 +402,6 @@ export function updateSummary(check, plan) {
     source_commit: check.source.commit,
     files: { added: check.files.added.length, modified: check.files.modified.length, removed: check.files.removed.length },
     migrations: check.migrations.pending,
-    backup_database: check.backup_database,
     sending_campaigns: check.sending_campaigns,
     estimated_downtime_sec: check.estimated_downtime_sec,
     manifest_sha256: plan.manifestSha256

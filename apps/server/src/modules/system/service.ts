@@ -15,7 +15,7 @@ import { REPO_ROOT } from "../../env.ts";
 import { consumeConfirmToken, issueConfirmToken } from "../../lib/confirm-token.ts";
 import { Errors } from "../../lib/errors.ts";
 import {
-  CURRENT_TASK_FILE, LABELS, UPDATER_FILES, computeCheck, currentTask, effectiveTaskStatus, findCodex, isTaskId, pluginStatus,
+  CURRENT_TASK_FILE, LABELS, UPDATER_FILES, computeCheck, currentTask, effectiveTaskStatus, findCodex, isTaskAlive, isTaskId, pluginStatus,
   readTaskStatus, releaseCurrentTask, taskDir, taskHistory, updateSummary, writeJsonAtomic, type PluginState
 } from "../../update/lib.mjs";
 
@@ -71,9 +71,13 @@ export async function getUpdateCheck(db: Db, config: UpdateConfig): Promise<Upda
   return (await check(db, config)).check;
 }
 
-export function getUpdateTask(id: string): UpdateTaskStatus {
+export async function getUpdateTask(id: string): Promise<UpdateTaskStatus> {
   const status = isTaskId(id) ? readTaskStatus(REPO_ROOT, id) : null;
   if (!status) throw Errors.notFound("更新任务不存在");
+  // 换文件之后更新程序被杀掉时，页面仍能打开就从这一次任务继续，不另起一次更新。
+  if (status.forward && status.state === "running" && currentTask(REPO_ROOT) === id && !isTaskAlive(status)) {
+    await execFileAsync("/bin/launchctl", ["kickstart", `gui/${process.getuid!()}/${LABELS.updater}`]).catch(() => {});
+  }
   return effectiveTaskStatus(status);
 }
 
@@ -92,7 +96,7 @@ async function startTask(mode: UpdateTaskMode, request: Record<string, unknown>,
   writeJsonAtomic(path.join(dir, "request.json"), { id, mode, created_at: new Date().toISOString(), ...request });
   const status: UpdateTaskStatus = {
     id, mode, state: "queued", created_at: new Date().toISOString(), finished_at: null, stage: null, stages: [],
-    ...versions, downtime_sec: null, backup_dir: null, database_backed_up: false, pid: null, error: null
+    ...versions, downtime_sec: null, forward: false, warnings: [], pid: null, error: null
   };
   writeJsonAtomic(path.join(dir, "status.json"), status);
   fs.writeFileSync(path.join(REPO_ROOT, CURRENT_TASK_FILE), id);
@@ -120,39 +124,5 @@ export async function confirmUpdate(db: Db, config: UpdateConfig, confirmToken?:
   return startTask("update", { source_dir: config.UPDATE_SOURCE_DIR, manifest_sha256: plan.manifestSha256, summary }, {
     app: { before: result.app.installed, target: result.app.candidate, now: result.app.installed },
     plugin: { before: result.plugin.installed, target: result.plugin.candidate, now: result.plugin.installed, enabled: result.plugin.enabled }
-  });
-}
-
-/** 部分完成且只有插件阶段失败的任务：重试插件（用户已确认过同一目标）。 */
-export async function retryPlugin(id: string): Promise<{ task_id: string }> {
-  const task = getUpdateTask(id);
-  const pluginFailed = task.stages.some((stage) => stage.name === "plugin" && stage.result === "failed");
-  if (task.state !== "partial" || !pluginFailed) throw Errors.invalidState("只有插件阶段失败的任务可以重试插件");
-  if (task.app.now !== task.app.target) throw Errors.invalidState("应用未更新到目标版本，不能单独重试插件");
-  return startTask("plugin", {}, { app: { ...task.app }, plugin: { before: task.plugin.now, target: task.plugin.target, now: task.plugin.now, enabled: task.plugin.enabled } });
-}
-
-/**
- * D5：手动回滚部分完成的任务，经两步确认。
- * 部分完成的任务都已通过 migrate 阶段；有数据库备份即表示本次执行过迁移，旧版本代码不能连接迁移后的库，
- * 因此有备份时必须同时恢复数据库，摘要以 `may_resend` 要求用户明确接受。
- */
-export async function rollbackTask(db: Db, id: string, input: { confirm_token?: string }) {
-  const task = getUpdateTask(id);
-  if (task.state !== "partial" || !task.backup_dir) throw Errors.invalidState("只有部分完成且有备份的任务可以回滚");
-  const restoreDatabase = task.database_backed_up;
-  const summary = {
-    task_id: id,
-    app: { now: task.app.now, restore_to: task.app.before },
-    restore_database: restoreDatabase,
-    /** 恢复数据库会丢弃更新后写入的数据，并可能让已发出的邮件重新进入队列。 */
-    may_resend: restoreDatabase
-  };
-  const params = { action: "app_update_rollback" as const, target: { task_id: id }, summary };
-  if (!input.confirm_token) return issueConfirmToken(db, params);
-  await consumeConfirmToken(db, { token: input.confirm_token, ...params });
-  return startTask("rollback", { rollback_of: id, restore_database: restoreDatabase }, {
-    app: { before: task.app.now, target: task.app.before, now: task.app.now },
-    plugin: { ...task.plugin }
   });
 }

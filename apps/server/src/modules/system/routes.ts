@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
-import { UpdateConfirmBody, UpdateRollbackBody } from "@mailqivo/shared";
+import { UpdateConfirmBody } from "@mailqivo/shared";
 import { parseOrThrow } from "../../lib/errors.ts";
-import { confirmUpdate, getUpdateCheck, getUpdateTask, retryPlugin, rollbackTask } from "./service.ts";
+import { confirmUpdate, getUpdateCheck, getUpdateTask } from "./service.ts";
 
 type IdParams = { Params: { id: string } };
 
@@ -10,7 +10,4 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
   app.get("/update", async () => getUpdateCheck(app.db, app.config));
   app.post("/update", async (request) => confirmUpdate(app.db, app.config, parseOrThrow(UpdateConfirmBody, request.body ?? {}).confirm_token));
   app.get<IdParams>("/update/tasks/:id", async (request) => getUpdateTask(request.params.id));
-  app.post<IdParams>("/update/tasks/:id/retry-plugin", async (request) => retryPlugin(request.params.id));
-  app.post<IdParams>("/update/tasks/:id/rollback", async (request) =>
-    rollbackTask(app.db, request.params.id, parseOrThrow(UpdateRollbackBody, request.body ?? {})));
 };

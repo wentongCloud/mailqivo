@@ -2,6 +2,8 @@
  * 更新程序（实现规格「版本更新」）：launchd 任务 com.mailqivo.updater 运行任务目录中的本文件副本：
  *   node <运行目录>/.service/updates/<任务 id>/updater.mjs <任务 id>
  * 它是唯一写运行目录、安装清单与插件缓存的主人。只依赖 Node 内置模块与同目录的 lib.mjs。
+ * 顺序：停服务、备份数据库、全量替换程序、启动并健康检查、迁移、核对数据。
+ * 替换或启动失败则整份再替换一次。迁移失败只重试迁移。不恢复备份，不回退旧版本。
  */
 import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
@@ -11,7 +13,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 import {
   DEFAULT_CHECKS, INSTALLED_MANIFEST, LABELS, PLUGIN_DIR, PLUGIN_ID, PORTS,
-  appVersion, computeCheck, findCodex, isTaskId, pluginCacheMatches, pluginStatus, readEnvFile, readJson,
+  analyzeMigrations, appVersion, compareVersions, computeCheck, databasePort, findCodex, isProtected, isTaskId, killTree,
+  pluginCacheMatches, pluginStatus, readEnvFile, readJournal, readJson,
   readTaskStatus, releaseCurrentTask, runCodex, safeRel, sha256File, taskDir, writeJsonAtomic
 } from "./lib.mjs";
 
@@ -22,8 +25,8 @@ const runDir = path.resolve(import.meta.dirname, "../../..");
 const dir = taskDir(runDir, id);
 const request = readJson(path.join(dir, "request.json"));
 const status = readTaskStatus(runDir, id);
-const backupDir = path.join(dir, "backup");
 const pnpm = process.env.MAILQIVO_PNPM_BIN || "pnpm";
+const RETRY_PAUSE_MS = 5_000;
 const domain = `gui/${process.getuid()}`;
 const launchAgents = path.join(process.env.HOME, "Library/LaunchAgents");
 
@@ -32,17 +35,25 @@ class StageFailure extends Error {}
 function save() { writeJsonAtomic(path.join(dir, "status.json"), status); }
 function log(message) { console.log(`[updater ${new Date().toISOString()}] ${message}`); }
 
+/** 同一阶段只保留最后一条。 */
+function recordStage(entry) {
+  const index = status.stages.findIndex((item) => item.name === entry.name);
+  if (index >= 0) status.stages[index] = entry;
+  else status.stages.push(entry);
+}
+
 /** 执行一个阶段：记录开始、结果与失败原因（不含密码与令牌）。 */
 async function stage(name, enabled, fn) {
-  if (!enabled) { status.stages.push({ name, result: "skipped" }); save(); return; }
+  if (!enabled) { recordStage({ name, result: "skipped" }); save(); return; }
   status.stage = name; save(); log(`开始 ${name}`);
   try {
     const detail = await fn();
-    status.stages.push({ name, result: "ok", ...(detail ? { detail } : {}) });
+    recordStage({ name, result: "ok", ...(detail ? { detail } : {}) });
     save();
+    return detail;
   } catch (error) {
     const message = (error instanceof Error ? error.message : String(error)).slice(0, 2000);
-    status.stages.push({ name, result: "failed", detail: message });
+    recordStage({ name, result: "failed", detail: message });
     status.error = `${name}: ${message}`;
     save(); log(`失败 ${name}：${message}`);
     throw new StageFailure(message);
@@ -51,16 +62,18 @@ async function stage(name, enabled, fn) {
 
 async function sh(command, args, cwd = runDir, timeout = 20 * 60_000) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+    // 独立进程组：超时时连同 pnpm 启动的 next build、tsc 等一起结束，避免回滚开始后仍写运行目录。
+    const child = spawn(command, args, { cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"], detached: true });
     let tail = "";
     const keep = (chunk) => { process.stdout.write(chunk); tail = (tail + chunk).slice(-4000); };
     child.stdout.on("data", keep); child.stderr.on("data", keep);
-    const timer = setTimeout(() => child.kill("SIGTERM"), timeout);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; killTree(child); }, timeout);
     child.on("error", reject);
     child.on("close", (code) => {
       clearTimeout(timer);
       if (code === 0) resolve(tail);
-      else reject(new Error(`${command} ${args.join(" ")} 退出码 ${code}：${tail.slice(-600)}`));
+      else reject(new Error(`${command} ${args.join(" ")} ${timedOut ? `超过 ${Math.round(timeout / 1000)} 秒被结束` : `退出码 ${code}`}：${tail.slice(-600)}`));
     });
   });
 }
@@ -90,12 +103,12 @@ async function stopAppServices() {
 }
 async function stopDatabase() {
   await stopService(LABELS.postgres);
-  await waitFor(async () => !await portOpen(PORTS.postgres) && !fs.existsSync(path.join(runDir, ".pgdata/postmaster.pid")), 60, "数据库停止");
+  await waitFor(async () => !await portOpen(databasePort(runDir)), 60, "数据库停止");
 }
 async function startDatabase() {
-  if (await portOpen(PORTS.postgres)) return; // 未停止过的数据库不重启
+  if (await portOpen(databasePort(runDir))) return; // 未停止过的数据库不重启
   await startService(LABELS.postgres);
-  await waitFor(() => portOpen(PORTS.postgres), 60, "数据库");
+  await waitFor(() => portOpen(databasePort(runDir)), 60, "数据库");
 }
 /** 失败后尽力启动数据库与服务；返回写入错误信息的结果说明。 */
 async function restartAfterFailure() {
@@ -110,10 +123,19 @@ async function restartAfterFailure() {
 async function httpStatus(url, init) {
   try { return (await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(5000), ...init })).status; } catch { return 0; }
 }
+/** 就绪：API 健康检查的 version 等于候选版本，且登录页返回 200。 */
+async function candidateReady() {
+  try {
+    const response = await fetch(`http://127.0.0.1:${PORTS.server}/healthz`, { signal: AbortSignal.timeout(5000) });
+    if (response.status !== 200) return false;
+    const health = await response.json();
+    if (health.version !== status.app.target) return false;
+  } catch { return false; }
+  return await httpStatus(`http://127.0.0.1:${PORTS.web}/login`) === 200;
+}
 async function startAppServices() {
   await startService(LABELS.server); await startService(LABELS.web);
-  await waitFor(async () => await httpStatus(`http://127.0.0.1:${PORTS.server}/healthz`) === 200 &&
-    await httpStatus(`http://127.0.0.1:${PORTS.web}/login`) === 200, 120, "web、server");
+  await waitFor(candidateReady, 120, "web、server");
 }
 
 // ---------------------------------------------------------------------------
@@ -133,60 +155,65 @@ async function databaseState() {
   }
 }
 
+/** 备份前的业务行数。软删活动只在迁移 0012 中删除，联系人和模板应保持不变。 */
+async function tableCounts() {
+  const pg = createRequire(path.join(runDir, "apps/server/package.json"))("pg");
+  const client = new pg.Client({ connectionString: readEnvFile(runDir).DATABASE_URL });
+  await client.connect();
+  try {
+    const deleted = await client.query("SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'campaigns' AND column_name = 'deleted_at'");
+    const counts = await client.query("SELECT (SELECT count(*)::int FROM contacts) AS contacts, (SELECT count(*)::int FROM templates) AS templates, (SELECT count(*)::int FROM campaigns) AS campaigns");
+    const softDeleted = deleted.rowCount
+      ? (await client.query("SELECT count(*)::int AS n FROM campaigns WHERE deleted_at IS NOT NULL")).rows[0].n
+      : 0;
+    const row = counts.rows[0];
+    return { contacts: Number(row.contacts), templates: Number(row.templates), campaigns: Number(row.campaigns), softDeleted: Number(softDeleted) };
+  } finally {
+    await client.end();
+  }
+}
+
 // ---------------------------------------------------------------------------
-// 文件备份与恢复
+// 备份数据库，再全量替换程序。失败不修补个别文件，整份再复制一次。不恢复备份。
 // ---------------------------------------------------------------------------
 
 function copyFile(from, to) { fs.mkdirSync(path.dirname(to), { recursive: true }); fs.copyFileSync(from, to); }
 
-function backupFiles(plan) {
-  for (const rel of [...plan.files.modified, ...plan.files.removed]) copyFile(path.join(runDir, safeRel(rel)), path.join(backupDir, "files", rel));
-  if (fs.existsSync(path.join(runDir, INSTALLED_MANIFEST))) copyFile(path.join(runDir, INSTALLED_MANIFEST), path.join(backupDir, "installed-manifest.json"));
-  writeJsonAtomic(path.join(backupDir, "plan.json"), { files: plan.files });
-  status.backup_dir = path.relative(runDir, backupDir); save();
+/** 停库后把 .pgdata 复制到任务目录。配置、data/ 与 .env 不在替换范围内，不另做副本。 */
+async function backupData() {
+  const dest = path.join(dir, "pgdata");
+  const countsFile = path.join(dir, "counts.json");
+  if (!fs.existsSync(path.join(dest, "PG_VERSION"))) {
+    if (!fs.existsSync(path.join(runDir, ".pgdata", "PG_VERSION"))) throw new Error("没有本地数据库目录 .pgdata");
+    const partial = `${dest}.partial`;
+    await stopDatabase();
+    try {
+      fs.rmSync(partial, { recursive: true, force: true });
+      fs.cpSync(path.join(runDir, ".pgdata"), partial, { recursive: true });
+      fs.rmSync(dest, { recursive: true, force: true });
+      fs.renameSync(partial, dest);
+    } finally {
+      await startDatabase();
+    }
+  }
+  if (!fs.existsSync(countsFile)) writeJsonAtomic(countsFile, await tableCounts());
+  return "已备份数据库";
 }
 
-/** 把运行目录恢复到备份：还原被覆盖与被删除的文件，删除新增的文件。 */
-function restoreFiles() {
-  const { files } = readJson(path.join(backupDir, "plan.json"));
-  for (const rel of files.added) fs.rmSync(path.join(runDir, safeRel(rel)), { force: true });
-  for (const rel of [...files.modified, ...files.removed]) copyFile(path.join(backupDir, "files", safeRel(rel)), path.join(runDir, rel));
-  const manifest = path.join(backupDir, "installed-manifest.json");
-  if (fs.existsSync(manifest)) copyFile(manifest, path.join(runDir, INSTALLED_MANIFEST));
-  else fs.rmSync(path.join(runDir, INSTALLED_MANIFEST), { force: true });
-}
-
-/**
- * 数据库目录与备份交换；当前目录改名保留，不删除。调用前数据库必须已停止。
- * 先把备份完整复制到任务目录（与运行目录同一文件系统），再用两次改名交换，复制失败时 `.pgdata` 不变。
- */
-function restoreDatabaseDir() {
-  const current = path.join(runDir, ".pgdata");
-  const staged = path.join(dir, "pgdata-restoring");
-  fs.rmSync(staged, { recursive: true, force: true });
-  fs.cpSync(path.join(backupDir, "pgdata"), staged, { recursive: true, preserveTimestamps: true });
-  const replaced = path.join(dir, `pgdata-replaced-${Date.now()}`);
-  fs.renameSync(current, replaced);
-  try { fs.renameSync(staged, current); } catch (error) { fs.renameSync(replaced, current); throw error; }
-}
-
-function applyFiles(plan) {
-  for (const rel of [...plan.files.added, ...plan.files.modified]) {
+/** 按候选清单覆盖运行目录中的程序文件。不碰 .env、data/、.pgdata、.service。 */
+function fullReplace(plan) {
+  for (const [rel, hash] of Object.entries(plan.manifest)) {
+    if (isProtected(rel)) continue;
     const target = path.join(runDir, safeRel(rel));
     copyFile(path.join(request.source_dir, rel), target);
-    if (sha256File(target) !== plan.manifest[rel]) throw new Error(`复制后内容不一致：${rel}`);
+    if (sha256File(target) !== hash) throw new Error(`复制后内容不一致：${rel}`);
   }
-  for (const rel of plan.files.removed) fs.rmSync(path.join(runDir, safeRel(rel)), { force: true });
+  for (const rel of plan.files.removed) {
+    if (!isProtected(rel)) fs.rmSync(path.join(runDir, safeRel(rel)), { force: true });
+  }
+  return "已全量替换";
 }
 
-const needsInstall = (plan) => [...plan.files.added, ...plan.files.modified, ...plan.files.removed]
-  .some((rel) => rel === "pnpm-lock.yaml" || rel === "pnpm-workspace.yaml" || rel.endsWith("package.json"));
-
-async function installAndBuild() {
-  await sh(pnpm, ["install", "--frozen-lockfile"]);
-  await sh(pnpm, ["--filter", "@mailqivo/server", "typecheck"]);
-  await sh(pnpm, ["--filter", "@mailqivo/web", "exec", "next", "build", "--webpack"]);
-}
 
 // ---------------------------------------------------------------------------
 // 候选验收与运行验收
@@ -204,31 +231,20 @@ async function verifyCandidate() {
   return checks.join("、");
 }
 
-/** §7 运行验收：版本、登录、鉴权、受影响入口、MCP。 */
-async function verifyRunning(targetVersion) {
-  const env = readEnvFile(runDir);
-  const api = `http://127.0.0.1:${PORTS.server}`;
-  const web = `http://127.0.0.1:${PORTS.web}`;
-  const health = await (await fetch(`${api}/healthz`)).json();
-  if (health.version !== targetVersion) throw new Error(`运行版本为 ${health.version}，目标为 ${targetVersion}`);
-  const login = await fetch(`${api}/api/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: env.ADMIN_PASSWORD }) });
-  const cookie = (login.headers.get("set-cookie") ?? "").split(";")[0];
-  if (login.status !== 200 || !cookie) throw new Error(`登录失败（HTTP ${login.status}）`);
-  const failures = [];
-  const expect = async (label, url, init, wanted) => { const code = await httpStatus(url, init); if (code !== wanted) failures.push(`${label}=${code}`); };
-  await expect("未登录 /%61pi/auth/me", `${api}/%61pi/auth/me`, {}, 401);
-  for (const route of ["/api/campaigns?limit=1", "/api/contacts?limit=1"]) await expect(route, `${api}${route}`, { headers: { cookie } }, 200);
-  for (const route of ["/campaigns", "/contacts", "/settings/update"]) await expect(`web ${route}`, `${web}${route}`, { headers: { cookie } }, 200);
-  const mcp = (body) => fetch(`${api}/mcp`, {
-    method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${env.MCP_TOKEN}` },
-    body: JSON.stringify(body)
-  });
-  await mcp({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "mailqivo-updater", version: "1" } } });
-  const tools = await (await mcp({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })).json().catch(() => null);
-  if (!tools?.result?.tools?.length) failures.push("MCP tools/list");
-  if (failures.length) throw new Error(`未通过：${failures.join("，")}`);
-  return `版本 ${health.version}；登录、鉴权、活动、联系人、Web 页面与 MCP（${tools.result.tools.length} 个工具）通过`;
+/** 迁移完成后核对：迁移记录完整，且联系人、模板、未软删活动不少于备份前。 */
+async function checkData(plan) {
+  const before = readJson(path.join(dir, "counts.json"));
+  const after = await tableCounts();
+  const journal = analyzeMigrations(readJournal(runDir), (await databaseState()).recordedCreatedAt);
+  if (journal.pending.length || journal.skipped.length || journal.databaseAhead) {
+    throw new Error(`迁移未完整执行${journal.pending.length ? `：${journal.pending.join("、")}` : ""}`);
+  }
+  const dropsSoftDeleted = plan.migrations.some((tag) => tag.includes("campaign_physical_delete"));
+  const expectedCampaigns = dropsSoftDeleted ? before.campaigns - before.softDeleted : before.campaigns;
+  if (after.contacts < before.contacts || after.templates < before.templates || after.campaigns < expectedCampaigns) {
+    throw new Error(`数据少于备份前：联系人 ${before.contacts}→${after.contacts}，活动 ${expectedCampaigns}→${after.campaigns}，模板 ${before.templates}→${after.templates}`);
+  }
+  return `联系人 ${after.contacts}，活动 ${after.campaigns}，模板 ${after.templates}`;
 }
 
 async function updatePlugin(target) {
@@ -254,133 +270,132 @@ async function lockAndRecheck() {
   return plan;
 }
 
+/** 非致命步骤：失败写入 warnings，阶段仍记为完成。 */
+async function note(name, fn) {
+  try {
+    const detail = await fn();
+    recordStage({ name, result: "ok", ...(detail ? { detail } : {}) });
+  } catch (error) {
+    const message = (error instanceof Error ? error.message : String(error)).slice(0, 2000);
+    status.warnings.push(message);
+    recordStage({ name, result: "ok", detail: message });
+    log(`已记录 ${name}：${message}`);
+  }
+  save();
+}
+
+async function installDeps() {
+  await sh(pnpm, ["install", "--frozen-lockfile"]);
+  return "已按锁文件安装";
+}
+
+async function buildApp() {
+  await sh(pnpm, ["--filter", "@mailqivo/server", "typecheck"]);
+  await sh(pnpm, ["--filter", "@mailqivo/web", "exec", "next", "build", "--webpack"]);
+}
+
+async function migrate(plan) {
+  await startDatabase();
+  if (!plan.migrations.length) return "无待执行迁移";
+  await sh(pnpm, ["db:migrate"]);
+  return plan.migrations.join("、");
+}
+
+async function pluginStep(plan) {
+  if (!plan.pluginUpdate) return "插件无版本变化";
+  if (status.plugin.before && status.plugin.target && compareVersions(status.plugin.target, status.plugin.before) < 0) {
+    throw new Error("插件版本低于已安装版本，保持已安装插件");
+  }
+  return updatePlugin(status.plugin.target);
+}
+
+function markInstalled(plan) {
+  status.app.now = appVersion(runDir);
+  status.error = null;
+  writeJsonAtomic(path.join(runDir, INSTALLED_MANIFEST), {
+    version: status.app.target, commit: plan.commit, installed_at: new Date().toISOString(), files: plan.manifest
+  });
+  save();
+}
+
+/** 全量替换、安装、构建、启动。任一步失败就停掉服务，从头再替换一次。 */
+async function replaceUntilHealthy(plan, stoppedAt) {
+  for (;;) {
+    try {
+      await stopAppServices();
+      await stage("apply_files", true, () => fullReplace(plan));
+      await stage("install", true, installDeps);
+      await stage("build", true, buildApp);
+      await stage("start_services", true, async () => {
+        await startDatabase();
+        await startAppServices();
+        if (stoppedAt != null && status.downtime_sec == null) status.downtime_sec = Math.round((Date.now() - stoppedAt) / 1000);
+        return "健康检查通过";
+      });
+      markInstalled(plan);
+      return;
+    } catch (error) {
+      log(`全量替换后重试：${error instanceof Error ? error.message : String(error)}`);
+      await new Promise((resolve) => setTimeout(resolve, RETRY_PAUSE_MS));
+    }
+  }
+}
+
+/** 迁移失败只重试迁移。drizzle 在一个事务里执行，失败时数据仍是迁移前的内容。 */
+async function migrateUntilOk(plan) {
+  for (;;) {
+    try {
+      await stage("migrate", true, () => migrate(plan));
+      return;
+    } catch (error) {
+      log(`重试迁移：${error instanceof Error ? error.message : String(error)}`);
+      await new Promise((resolve) => setTimeout(resolve, RETRY_PAUSE_MS));
+    }
+  }
+}
+
+async function complete(plan, stoppedAt) {
+  await replaceUntilHealthy(plan, stoppedAt);
+  await migrateUntilOk(plan);
+  await stage("verify_running", true, () => checkData(plan));
+  await note("plugin", () => pluginStep(plan));
+}
+
 async function runUpdate() {
   let plan;
   await stage("lock", true, async () => { plan = await lockAndRecheck(); });
-  const app = plan.appUpdate;
-  const migrate = app && plan.migrations.length > 0;
-  await stage("verify_candidate", app, verifyCandidate);
-  await stage("backup_files", app, async () => backupFiles(plan));
+  writeJsonAtomic(path.join(dir, "plan.json"), plan);
+  if (!plan.appUpdate) return;
+  await stage("verify_candidate", true, verifyCandidate);
   let stoppedAt = null;
-  let rollbackFrom = null; // 失败后需要恢复到的程度：files / database
   try {
-    await stage("stop_services", app, async () => { stoppedAt = Date.now(); await stopAppServices(); });
+    await stage("stop_services", true, async () => { stoppedAt = Date.now(); await stopAppServices(); });
+    await stage("backup", true, backupData);
   } catch (error) {
     status.error = `${status.error}；${await restartAfterFailure()}`;
     throw error;
   }
-  try {
-    await stage("backup_database", migrate, async () => {
-      await stopDatabase();
-      fs.cpSync(path.join(runDir, ".pgdata"), path.join(backupDir, "pgdata"), { recursive: true, preserveTimestamps: true });
-      status.database_backed_up = true; save();
-    });
-    rollbackFrom = "files";
-    await stage("apply_files", app, async () => applyFiles(plan));
-    await stage("install", app && needsInstall(plan), () => sh(pnpm, ["install", "--frozen-lockfile"]));
-    await stage("build", app, async () => {
-      await sh(pnpm, ["--filter", "@mailqivo/server", "typecheck"]);
-      await sh(pnpm, ["--filter", "@mailqivo/web", "exec", "next", "build", "--webpack"]);
-    });
-    await stage("migrate", app, async () => {
-      await startDatabase();
-      if (!migrate) return "无待执行迁移";
-      rollbackFrom = "database";
-      await sh(pnpm, ["db:migrate"]);
-      return plan.migrations.join("、");
-    });
-  } catch (error) {
-    // 服务端进程启动之前：自动回滚（§5.3）。
-    if (rollbackFrom) await rollbackBeforeStart(rollbackFrom === "database");
-    else status.error = `${status.error}；${await restartAfterFailure()}`;
-    status.state = rollbackFrom ? "rolled_back" : "failed";
-    throw Object.assign(error, { handled: true });
-  }
-  try {
-    await stage("start_services", app, async () => { await startAppServices(); status.downtime_sec = Math.round((Date.now() - stoppedAt) / 1000); });
-    status.app.now = appVersion(runDir); save();
-    await stage("verify_running", app, () => verifyRunning(status.app.target));
-    if (app) writeJsonAtomic(path.join(runDir, INSTALLED_MANIFEST), { version: status.app.target, commit: plan.commit, installed_at: new Date().toISOString(), files: plan.manifest });
-  } catch (error) {
-    status.state = "partial"; // 服务端进程已启动：不自动回滚（D5）。
-    throw Object.assign(error, { handled: true });
-  }
-  try {
-    await stage("plugin", plan.pluginUpdate, () => updatePlugin(status.plugin.target));
-  } catch (error) {
-    status.state = "partial";
-    throw Object.assign(error, { handled: true });
-  }
+  status.forward = true;
+  save();
+  await complete(plan, stoppedAt);
 }
 
-/** 自动回滚：恢复文件（与数据库），重新安装、构建旧版本，再启动服务。 */
-async function rollbackBeforeStart(withDatabase) {
-  log(`自动回滚（数据库：${withDatabase ? "恢复" : "不变"}）`);
-  try {
-    if (withDatabase) { await stopDatabase(); restoreDatabaseDir(); }
-    restoreFiles();
-    await installAndBuild();
-    await startDatabase();
-    await startAppServices();
-    status.app.now = appVersion(runDir);
-  } catch (error) {
-    status.error = `${status.error ?? ""}；回滚失败：${error instanceof Error ? error.message : String(error)}；${await restartAfterFailure()}`;
-    status.state = "failed";
-    save();
-    throw error;
-  }
-}
-
-async function runPluginOnly() {
-  await stage("lock", true, async () => {
-    const plugin = await pluginStatus(findCodex());
-    status.plugin.before = plugin.installed; save();
-  });
-  await stage("plugin", true, () => updatePlugin(status.plugin.target));
-}
-
-/** 手动回滚（D5）：恢复某个部分完成任务的备份；只有用户确认时才恢复数据库。 */
-async function runRollback() {
-  const source = taskDir(runDir, request.rollback_of);
-  if (!fs.existsSync(path.join(source, "backup/plan.json"))) throw new Error("该任务没有可用的备份");
-  fs.cpSync(path.join(source, "backup"), backupDir, { recursive: true });
-  await stage("lock", true, async () => {});
-  try {
-    await stage("stop_services", true, async () => { await stopAppServices(); });
-    await stage("apply_files", true, async () => {
-      if (request.restore_database) { await stopDatabase(); restoreDatabaseDir(); }
-      restoreFiles();
-      return request.restore_database ? "文件与数据库已恢复" : "文件已恢复";
-    });
-    await stage("build", true, installAndBuild);
-    await stage("start_services", true, async () => { await startDatabase(); await startAppServices(); });
-  } catch (error) {
-    // 停止服务开始后：任何失败（含停止本身中途失败）都尽力重新启动，不让 Web 与 API 停在关闭状态。
-    status.error = `${status.error}；${await restartAfterFailure()}`;
-    throw error;
-  }
-  status.app.now = appVersion(runDir); save();
-  await stage("verify_running", true, () => verifyRunning(status.app.now));
-}
-
-status.state = "running"; status.pid = process.pid; save();
+status.state = "running"; status.pid = process.pid; if (!Array.isArray(status.warnings)) status.warnings = []; save();
 try {
-  if (request.mode === "update") await runUpdate();
-  else if (request.mode === "plugin") await runPluginOnly();
-  else if (request.mode === "rollback") await runRollback();
-  else throw new Error(`未知模式：${request.mode}`);
+  if (request.mode !== "update") throw new Error(`未知模式：${request.mode}`);
+  if (status.forward) await complete(readJson(path.join(dir, "plan.json")), null);
+  else await runUpdate();
   status.state = "succeeded";
 } catch (error) {
-  if (!error?.handled && status.state === "running") status.state = "failed";
+  if (status.state === "running") status.state = "failed";
   if (!status.error) status.error = error instanceof Error ? error.message : String(error);
 } finally {
+  status.pid = null;
   status.app.now = appVersion(runDir);
-  try { const plugin = await pluginStatus(findCodex()); status.plugin.now = plugin.installed; status.plugin.enabled = plugin.enabled; } catch { /* 保留已有值 */ }
-  if (status.state === "succeeded" && request.mode === "update" &&
-      (status.app.now !== status.app.target || status.plugin.now !== status.plugin.target)) status.state = "partial";
+  try { const plugin = await pluginStatus(findCodex(), 15_000); status.plugin.now = plugin.installed; status.plugin.enabled = plugin.enabled; } catch { /* 保留已有值 */ }
   status.stage = null;
   status.finished_at = new Date().toISOString();
-  status.stages.push({ name: "finish", result: "ok" });
+  recordStage({ name: "finish", result: status.state === "succeeded" ? "ok" : "failed" });
   save();
   releaseCurrentTask(runDir, id);
   log(`结束：${status.state}`);
