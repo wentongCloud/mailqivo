@@ -345,8 +345,8 @@ async function runRollback() {
   if (!fs.existsSync(path.join(source, "backup/plan.json"))) throw new Error("该任务没有可用的备份");
   fs.cpSync(path.join(source, "backup"), backupDir, { recursive: true });
   await stage("lock", true, async () => {});
-  await stage("stop_services", true, async () => { await stopAppServices(); });
   try {
+    await stage("stop_services", true, async () => { await stopAppServices(); });
     await stage("apply_files", true, async () => {
       if (request.restore_database) { await stopDatabase(); restoreDatabaseDir(); }
       restoreFiles();
@@ -355,7 +355,7 @@ async function runRollback() {
     await stage("build", true, installAndBuild);
     await stage("start_services", true, async () => { await startDatabase(); await startAppServices(); });
   } catch (error) {
-    // 服务已停止：任何失败都尽力重新启动，不让 Web 与 API 停在关闭状态。
+    // 停止服务开始后：任何失败（含停止本身中途失败）都尽力重新启动，不让 Web 与 API 停在关闭状态。
     status.error = `${status.error}；${await restartAfterFailure()}`;
     throw error;
   }
