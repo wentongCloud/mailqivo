@@ -77,10 +77,8 @@ export type UpdateSummary = {
 export const UpdateConfirmBody = z.object({ confirm_token: z.string().min(1).optional() }).strict();
 export type UpdateConfirmBody = z.infer<typeof UpdateConfirmBody>;
 
-export const UpdateRollbackBody = z.object({
-  restore_database: z.boolean().default(false),
-  confirm_token: z.string().min(1).optional()
-}).strict();
+/** 有数据库备份的任务（本次执行过迁移）回滚时必须同时恢复数据库，由服务端决定，不接受请求参数。 */
+export const UpdateRollbackBody = z.object({ confirm_token: z.string().min(1).optional() }).strict();
 export type UpdateRollbackBody = z.infer<typeof UpdateRollbackBody>;
 
 export type UpdateTaskStatus = {
@@ -97,5 +95,7 @@ export type UpdateTaskStatus = {
   /** 只在任务产生备份时出现，路径相对运行目录。 */
   backup_dir: string | null;
   database_backed_up: boolean;
+  /** 更新程序进程 id；任务开始执行时写入，用于判断进程是否仍在运行。 */
+  pid: number | null;
   error: string | null;
 };

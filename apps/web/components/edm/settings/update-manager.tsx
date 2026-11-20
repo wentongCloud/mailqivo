@@ -16,8 +16,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
@@ -174,7 +172,6 @@ function TaskCard({ task, reconnecting, onFollow }: { task?: UpdateTaskStatus; r
   const retry = useRetryPlugin();
   const rollback = useRollbackUpdate();
   const [rollbackOpen, setRollbackOpen] = React.useState(false);
-  const [restoreDatabase, setRestoreDatabase] = React.useState(false);
   const [rollbackChallenge, setRollbackChallenge] = React.useState<Challenge<RollbackSummary> | null>(null);
   if (!task) return <Card><CardContent className="text-muted-foreground flex items-center gap-2 py-6 text-sm"><Loader2 className="size-4 animate-spin" />{t("reconnecting")}</CardContent></Card>;
 
@@ -187,7 +184,7 @@ function TaskCard({ task, reconnecting, onFollow }: { task?: UpdateTaskStatus; r
   }
   async function confirmRollback() {
     try {
-      const result = await rollback.mutateAsync({ id: task!.id, restore_database: restoreDatabase, confirm_token: rollbackChallenge?.token });
+      const result = await rollback.mutateAsync({ id: task!.id, confirm_token: rollbackChallenge?.token });
       if ("confirm_token" in result) { setRollbackChallenge({ token: result.confirm_token, summary: result.summary }); return; }
       setRollbackOpen(false); setRollbackChallenge(null); onFollow(result.task_id);
     } catch (error) {
@@ -236,12 +233,7 @@ function TaskCard({ task, reconnecting, onFollow }: { task?: UpdateTaskStatus; r
             <AlertDialogTitle>{t("rollbackTitle")}</AlertDialogTitle>
             <AlertDialogDescription>{t("rollbackDesc", { version: task.app.before ?? "—" })}</AlertDialogDescription>
           </AlertDialogHeader>
-          {task.database_backed_up && (
-            <div className="flex items-start gap-2">
-              <Checkbox id="restore-database" checked={restoreDatabase} disabled={!!rollbackChallenge} onCheckedChange={(value) => setRestoreDatabase(value === true)} />
-              <Label htmlFor="restore-database" className="leading-snug">{t("restoreDatabase")}</Label>
-            </div>
-          )}
+          {task.database_backed_up && <Alert><CircleAlert /><AlertDescription>{t("restoreDatabase")}</AlertDescription></Alert>}
           {rollbackChallenge?.summary.may_resend && <Alert variant="destructive"><CircleAlert /><AlertDescription>{t("mayResend")}</AlertDescription></Alert>}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={rollback.isPending}>{tc("cancel")}</AlertDialogCancel>

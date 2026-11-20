@@ -43,10 +43,10 @@ export function useRetryPlugin() {
 
 export function useRollbackUpdate() {
   return useMutation({
-    mutationFn: ({ id, restore_database, confirm_token }: { id: string; restore_database: boolean; confirm_token?: string }) =>
+    mutationFn: ({ id, confirm_token }: { id: string; confirm_token?: string }) =>
       apiFetch<RollbackResponse>(`/api/system/update/tasks/${id}/rollback`, {
         method: "POST",
-        body: JSON.stringify({ restore_database, ...(confirm_token ? { confirm_token } : {}) })
+        body: JSON.stringify(confirm_token ? { confirm_token } : {})
       })
   });
 }

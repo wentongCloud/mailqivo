@@ -10,9 +10,9 @@ import net from "node:net";
 import path from "node:path";
 import { promisify } from "node:util";
 import {
-  CURRENT_TASK_FILE, DEFAULT_CHECKS, INSTALLED_MANIFEST, LABELS, PLUGIN_DIR, PLUGIN_ID, PORTS,
+  DEFAULT_CHECKS, INSTALLED_MANIFEST, LABELS, PLUGIN_DIR, PLUGIN_ID, PORTS,
   appVersion, computeCheck, findCodex, isTaskId, pluginCacheMatches, pluginStatus, readEnvFile, readJson,
-  readTaskStatus, runCodex, safeRel, sha256File, taskDir, writeJsonAtomic
+  readTaskStatus, releaseCurrentTask, runCodex, safeRel, sha256File, taskDir, writeJsonAtomic
 } from "./lib.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -97,6 +97,16 @@ async function startDatabase() {
   await startService(LABELS.postgres);
   await waitFor(() => portOpen(PORTS.postgres), 60, "数据库");
 }
+/** 失败后尽力启动数据库与服务；返回写入错误信息的结果说明。 */
+async function restartAfterFailure() {
+  try {
+    await startDatabase();
+    await startAppServices();
+    return "服务已重新启动";
+  } catch (error) {
+    return `服务未能重新启动：${error instanceof Error ? error.message : String(error)}`;
+  }
+}
 async function httpStatus(url, init) {
   try { return (await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(5000), ...init })).status; } catch { return 0; }
 }
@@ -146,11 +156,18 @@ function restoreFiles() {
   else fs.rmSync(path.join(runDir, INSTALLED_MANIFEST), { force: true });
 }
 
-/** 数据库目录与备份交换；当前目录改名保留，不删除。调用前数据库必须已停止。 */
+/**
+ * 数据库目录与备份交换；当前目录改名保留，不删除。调用前数据库必须已停止。
+ * 先把备份完整复制到任务目录（与运行目录同一文件系统），再用两次改名交换，复制失败时 `.pgdata` 不变。
+ */
 function restoreDatabaseDir() {
   const current = path.join(runDir, ".pgdata");
-  fs.renameSync(current, path.join(dir, `pgdata-replaced-${Date.now()}`));
-  fs.cpSync(path.join(backupDir, "pgdata"), current, { recursive: true, preserveTimestamps: true });
+  const staged = path.join(dir, "pgdata-restoring");
+  fs.rmSync(staged, { recursive: true, force: true });
+  fs.cpSync(path.join(backupDir, "pgdata"), staged, { recursive: true, preserveTimestamps: true });
+  const replaced = path.join(dir, `pgdata-replaced-${Date.now()}`);
+  fs.renameSync(current, replaced);
+  try { fs.renameSync(staged, current); } catch (error) { fs.renameSync(replaced, current); throw error; }
 }
 
 function applyFiles(plan) {
@@ -249,7 +266,7 @@ async function runUpdate() {
   try {
     await stage("stop_services", app, async () => { stoppedAt = Date.now(); await stopAppServices(); });
   } catch (error) {
-    await startAppServices().catch(() => {});
+    status.error = `${status.error}；${await restartAfterFailure()}`;
     throw error;
   }
   try {
@@ -275,7 +292,7 @@ async function runUpdate() {
   } catch (error) {
     // 服务端进程启动之前：自动回滚（§5.3）。
     if (rollbackFrom) await rollbackBeforeStart(rollbackFrom === "database");
-    else await startDatabase().then(startAppServices).catch(() => {});
+    else status.error = `${status.error}；${await restartAfterFailure()}`;
     status.state = rollbackFrom ? "rolled_back" : "failed";
     throw Object.assign(error, { handled: true });
   }
@@ -307,7 +324,7 @@ async function rollbackBeforeStart(withDatabase) {
     await startAppServices();
     status.app.now = appVersion(runDir);
   } catch (error) {
-    status.error = `${status.error ?? ""}；回滚失败：${error instanceof Error ? error.message : String(error)}`;
+    status.error = `${status.error ?? ""}；回滚失败：${error instanceof Error ? error.message : String(error)}；${await restartAfterFailure()}`;
     status.state = "failed";
     save();
     throw error;
@@ -329,18 +346,24 @@ async function runRollback() {
   fs.cpSync(path.join(source, "backup"), backupDir, { recursive: true });
   await stage("lock", true, async () => {});
   await stage("stop_services", true, async () => { await stopAppServices(); });
-  await stage("apply_files", true, async () => {
-    if (request.restore_database) { await stopDatabase(); restoreDatabaseDir(); }
-    restoreFiles();
-    return request.restore_database ? "文件与数据库已恢复" : "文件已恢复";
-  });
-  await stage("build", true, installAndBuild);
-  await stage("start_services", true, async () => { await startDatabase(); await startAppServices(); });
+  try {
+    await stage("apply_files", true, async () => {
+      if (request.restore_database) { await stopDatabase(); restoreDatabaseDir(); }
+      restoreFiles();
+      return request.restore_database ? "文件与数据库已恢复" : "文件已恢复";
+    });
+    await stage("build", true, installAndBuild);
+    await stage("start_services", true, async () => { await startDatabase(); await startAppServices(); });
+  } catch (error) {
+    // 服务已停止：任何失败都尽力重新启动，不让 Web 与 API 停在关闭状态。
+    status.error = `${status.error}；${await restartAfterFailure()}`;
+    throw error;
+  }
   status.app.now = appVersion(runDir); save();
   await stage("verify_running", true, () => verifyRunning(status.app.now));
 }
 
-status.state = "running"; save();
+status.state = "running"; status.pid = process.pid; save();
 try {
   if (request.mode === "update") await runUpdate();
   else if (request.mode === "plugin") await runPluginOnly();
@@ -359,6 +382,6 @@ try {
   status.finished_at = new Date().toISOString();
   status.stages.push({ name: "finish", result: "ok" });
   save();
-  fs.rmSync(path.join(runDir, CURRENT_TASK_FILE), { force: true });
+  releaseCurrentTask(runDir, id);
   log(`结束：${status.state}`);
 }

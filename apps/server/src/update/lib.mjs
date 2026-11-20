@@ -244,15 +244,36 @@ export const taskDir = (runDir, id) => path.join(runDir, UPDATES_DIR, id);
 export function readTaskStatus(runDir, id) {
   try { return readJson(path.join(taskDir(runDir, id), "status.json")); } catch { return null; }
 }
-/** 未结束的任务 id（C5）；`current` 指向的任务已结束时返回 null。 */
+/** kickstart 后更新程序把状态改为 running 的最长等待时间；超过即视为未启动。 */
+const QUEUED_GRACE_MS = 60_000;
+
+/** 任务是否仍在执行：queued 在宽限期内，或 running 且更新程序进程（status.pid）仍存在。 */
+export function isTaskAlive(status) {
+  if (status.state === "queued") return Date.now() - Date.parse(status.created_at) < QUEUED_GRACE_MS;
+  if (status.state !== "running" || !Number.isInteger(status.pid)) return false;
+  try { process.kill(status.pid, 0); return true; } catch (error) { return error?.code === "EPERM"; }
+}
+
+/** 对外显示的任务状态：进程已不存在却仍为 queued / running 的任务显示为 failed（不改写 status.json）。 */
+export function effectiveTaskStatus(status) {
+  if ((status.state !== "queued" && status.state !== "running") || isTaskAlive(status)) return status;
+  return { ...status, state: "failed", stage: null, error: status.error ?? "更新程序意外结束，任务未完成；请核对运行目录与服务状态后重新检查" };
+}
+
+function readCurrentPointer(runDir) {
+  try { return fs.readFileSync(path.join(runDir, CURRENT_TASK_FILE), "utf8").trim(); } catch { return null; }
+}
+
+/** 未结束的任务 id（C5）；`current` 指向的任务已结束或进程已不存在时返回 null。 */
 export function currentTask(runDir) {
-  try {
-    const id = fs.readFileSync(path.join(runDir, CURRENT_TASK_FILE), "utf8").trim();
-    const status = isTaskId(id) ? readTaskStatus(runDir, id) : null;
-    return status && (status.state === "queued" || status.state === "running") ? id : null;
-  } catch {
-    return null;
-  }
+  const id = readCurrentPointer(runDir);
+  const status = isTaskId(id) ? readTaskStatus(runDir, id) : null;
+  return status && isTaskAlive(status) ? id : null;
+}
+
+/** 只在 `current` 仍指向给定任务时删除它，不删除其他任务的指针。 */
+export function releaseCurrentTask(runDir, id) {
+  if (readCurrentPointer(runDir) === id) fs.rmSync(path.join(runDir, CURRENT_TASK_FILE), { force: true });
 }
 /** 最近一个任务的 id 与上次成功更新的停机秒数。 */
 export function taskHistory(runDir) {
@@ -268,12 +289,13 @@ export function taskHistory(runDir) {
 /**
  * 检查（§5.1）：计算版本、文件差异、迁移与阻止条件。
  * `database` 由调用方提供：{ recordedCreatedAt: number[], preparing: number, sending: number }。
+ * `readPlugin` 读取插件状态；默认直接调用 Codex（120 秒）。API 传入带缓存的读取（R2）。
  */
-export async function computeCheck({ runDir, sourceDir, database, codexBin = findCodex(), codexTimeoutMs = 120_000 }) {
+export async function computeCheck({ runDir, sourceDir, database, readPlugin = () => pluginStatus(findCodex()) }) {
   const blockers = [];
   const candidate = await readCandidate(sourceDir);
   let plugin, codexError = null;
-  try { plugin = await pluginStatus(codexBin, codexTimeoutMs); } catch (error) { plugin = { installed: null, enabled: false }; codexError = error instanceof Error ? error.message : String(error); }
+  try { plugin = await readPlugin(); } catch (error) { plugin = { installed: null, enabled: false }; codexError = error instanceof Error ? error.message : String(error); }
   const installedApp = appVersion(runDir);
   const history = taskHistory(runDir);
   const base = {

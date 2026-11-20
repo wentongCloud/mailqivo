@@ -15,7 +15,8 @@ import { REPO_ROOT } from "../../env.ts";
 import { consumeConfirmToken, issueConfirmToken } from "../../lib/confirm-token.ts";
 import { Errors } from "../../lib/errors.ts";
 import {
-  CURRENT_TASK_FILE, LABELS, UPDATER_FILES, computeCheck, isTaskId, readTaskStatus, taskDir, updateSummary, writeJsonAtomic
+  CURRENT_TASK_FILE, LABELS, UPDATER_FILES, computeCheck, currentTask, effectiveTaskStatus, findCodex, isTaskId, pluginStatus,
+  readTaskStatus, releaseCurrentTask, taskDir, taskHistory, updateSummary, writeJsonAtomic, type PluginState
 } from "../../update/lib.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -29,9 +30,41 @@ async function databaseState(db: Db) {
   return { recordedCreatedAt: migrations.rows.map((row) => Number(row.created_at)), preparing: campaigns!.preparing, sending: campaigns!.sending };
 }
 
+// ---------------------------------------------------------------------------
+// Codex 插件状态（R2）：页面请求经 Next.js rewrites 转发，最多等待 25 秒；Codex 读取本身最长 120 秒，
+// 超过 25 秒时在后台继续，结果留给之后的检查（含两步确认的第二步）使用。
+// ---------------------------------------------------------------------------
+
+const PAGE_WAIT_MS = 25_000;
+const CODEX_READ_MS = 120_000;
+/** 读取结果的有效期；任务结束后（插件可能已变）也立即失效。 */
+const PLUGIN_STATE_TTL_MS = 5 * 60_000;
+
+type PluginRead = { startedAt: number; failed: boolean; promise: Promise<PluginState> };
+let pluginRead: PluginRead | null = null;
+
+function lastTaskFinishedAt(): number {
+  const { last } = taskHistory(REPO_ROOT);
+  const finished = last ? readTaskStatus(REPO_ROOT, last)?.finished_at : null;
+  return finished ? Date.parse(finished) : 0;
+}
+
+function readPluginForPage(): Promise<PluginState> {
+  const read = pluginRead;
+  if (!read || read.failed || Date.now() - read.startedAt > PLUGIN_STATE_TTL_MS || read.startedAt < lastTaskFinishedAt()) {
+    const next: PluginRead = { startedAt: Date.now(), failed: false, promise: pluginStatus(findCodex(), CODEX_READ_MS) };
+    next.promise.catch(() => { next.failed = true; });
+    pluginRead = next;
+  }
+  const { promise } = pluginRead!;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Codex CLI 仍在读取插件状态（最长 ${CODEX_READ_MS / 1000} 秒），请稍后重新检查`)), PAGE_WAIT_MS);
+    promise.then(resolve, reject).finally(() => clearTimeout(timer));
+  });
+}
+
 async function check(db: Db, config: UpdateConfig) {
-  // 页面经 Next.js rewrites 请求本接口；Codex 等待控制在 25 秒内，超时报告 CODEX_UNAVAILABLE。
-  return computeCheck({ runDir: REPO_ROOT, sourceDir: config.UPDATE_SOURCE_DIR, database: await databaseState(db), codexTimeoutMs: 25_000 });
+  return computeCheck({ runDir: REPO_ROOT, sourceDir: config.UPDATE_SOURCE_DIR, database: await databaseState(db), readPlugin: readPluginForPage });
 }
 
 export async function getUpdateCheck(db: Db, config: UpdateConfig): Promise<UpdateCheck> {
@@ -41,11 +74,17 @@ export async function getUpdateCheck(db: Db, config: UpdateConfig): Promise<Upda
 export function getUpdateTask(id: string): UpdateTaskStatus {
   const status = isTaskId(id) ? readTaskStatus(REPO_ROOT, id) : null;
   if (!status) throw Errors.notFound("更新任务不存在");
-  return status;
+  return effectiveTaskStatus(status);
 }
 
-/** 创建任务目录，复制更新程序，写入请求与初始状态，再启动 launchd 任务 com.mailqivo.updater。 */
+/**
+ * 创建任务目录，复制更新程序，写入请求与初始状态，再启动 launchd 任务 com.mailqivo.updater。
+ * 任务锁（C5）：已有未结束的任务时拒绝。检查与写入 `current` 之间没有 await，同一 API 进程内不会交错。
+ */
 async function startTask(mode: UpdateTaskMode, request: Record<string, unknown>, versions: Pick<UpdateTaskStatus, "app" | "plugin">): Promise<{ task_id: string }> {
+  const running = currentTask(REPO_ROOT);
+  if (running) throw Errors.invalidState("已有未结束的更新任务", { blockers: [{ code: "TASK_RUNNING", items: [running] }] });
+  pluginRead = null;
   const id = randomUUID();
   const dir = taskDir(REPO_ROOT, id);
   fs.mkdirSync(dir, { recursive: true });
@@ -53,14 +92,14 @@ async function startTask(mode: UpdateTaskMode, request: Record<string, unknown>,
   writeJsonAtomic(path.join(dir, "request.json"), { id, mode, created_at: new Date().toISOString(), ...request });
   const status: UpdateTaskStatus = {
     id, mode, state: "queued", created_at: new Date().toISOString(), finished_at: null, stage: null, stages: [],
-    ...versions, downtime_sec: null, backup_dir: null, database_backed_up: false, error: null
+    ...versions, downtime_sec: null, backup_dir: null, database_backed_up: false, pid: null, error: null
   };
   writeJsonAtomic(path.join(dir, "status.json"), status);
   fs.writeFileSync(path.join(REPO_ROOT, CURRENT_TASK_FILE), id);
   try {
     await execFileAsync("/bin/launchctl", ["kickstart", `gui/${process.getuid!()}/${LABELS.updater}`]);
   } catch (error) {
-    fs.rmSync(path.join(REPO_ROOT, CURRENT_TASK_FILE), { force: true });
+    releaseCurrentTask(REPO_ROOT, id);
     writeJsonAtomic(path.join(dir, "status.json"), {
       ...status, state: "failed", finished_at: new Date().toISOString(),
       error: `无法启动更新程序 ${LABELS.updater}（请重新运行安装器）：${error instanceof Error ? error.message : String(error)}`
@@ -93,22 +132,26 @@ export async function retryPlugin(id: string): Promise<{ task_id: string }> {
   return startTask("plugin", {}, { app: { ...task.app }, plugin: { before: task.plugin.now, target: task.plugin.target, now: task.plugin.now, enabled: task.plugin.enabled } });
 }
 
-/** D5：手动回滚部分完成的任务。恢复数据库须在摘要中明确选择，并经两步确认。 */
-export async function rollbackTask(db: Db, id: string, input: { restore_database: boolean; confirm_token?: string }) {
+/**
+ * D5：手动回滚部分完成的任务，经两步确认。
+ * 部分完成的任务都已通过 migrate 阶段；有数据库备份即表示本次执行过迁移，旧版本代码不能连接迁移后的库，
+ * 因此有备份时必须同时恢复数据库，摘要以 `may_resend` 要求用户明确接受。
+ */
+export async function rollbackTask(db: Db, id: string, input: { confirm_token?: string }) {
   const task = getUpdateTask(id);
   if (task.state !== "partial" || !task.backup_dir) throw Errors.invalidState("只有部分完成且有备份的任务可以回滚");
-  if (input.restore_database && !task.database_backed_up) throw Errors.invalidState("该任务没有数据库备份");
+  const restoreDatabase = task.database_backed_up;
   const summary = {
     task_id: id,
     app: { now: task.app.now, restore_to: task.app.before },
-    restore_database: input.restore_database,
+    restore_database: restoreDatabase,
     /** 恢复数据库会丢弃更新后写入的数据，并可能让已发出的邮件重新进入队列。 */
-    may_resend: input.restore_database
+    may_resend: restoreDatabase
   };
   const params = { action: "app_update_rollback" as const, target: { task_id: id }, summary };
   if (!input.confirm_token) return issueConfirmToken(db, params);
   await consumeConfirmToken(db, { token: input.confirm_token, ...params });
-  return startTask("rollback", { rollback_of: id, restore_database: input.restore_database }, {
+  return startTask("rollback", { rollback_of: id, restore_database: restoreDatabase }, {
     app: { before: task.app.now, target: task.app.before, now: task.app.now },
     plugin: { ...task.plugin }
   });

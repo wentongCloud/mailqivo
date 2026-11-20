@@ -1147,7 +1147,7 @@
     "rollback": "Roll back",
     "rollbackTitle": "Roll back to the previous version?",
     "rollbackDesc": "Restores the app files from before the update (version {version}), rebuilds and restarts the services.",
-    "restoreDatabase": "Also restore the database backup (discards data written after the update)",
+    "restoreDatabase": "This update ran database migrations, and the previous version cannot use the migrated database. Rolling back also restores the database backup from before the update and discards data written after it.",
     "mayResend": "Restoring the database puts messages sent after the update back in the queue, so they may be sent again. This cannot be undone.",
     "mode": {
       "update": "Upgrade",
