@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
-import { useLocalizedLabels } from "@/lib/use-app-locale";
+import { useLocalizedLabels } from "@/hooks/use-app-locale";
 import { useCampaigns, useCampaignStats } from "@/lib/api/campaigns";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";

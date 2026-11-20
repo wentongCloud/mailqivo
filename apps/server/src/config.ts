@@ -66,6 +66,8 @@ export const ConfigSchema = z
     MAX_IMPORT_FILE_MB: intWithDefault(10),
     MAX_IMPORT_ROWS: intWithDefault(100000),
     ASSET_DIR: required(),
+    /** 版本更新的候选源（D1）：本机已提交的 git 工作区绝对路径；未设置时更新页显示「未配置候选源」。 */
+    UPDATE_SOURCE_DIR: z.string().refine((value) => value.startsWith("/"), "必须是绝对路径").optional(),
     /** 仅在确认有反向代理时设为 1；裸暴露进程时保持 0，避免伪造 X-Forwarded-For。 */
     TRUST_PROXY: z
       .enum(["0", "1"])

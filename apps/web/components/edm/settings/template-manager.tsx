@@ -8,7 +8,7 @@ import { Edit, Plus, Trash2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { TEMPLATE_CATEGORY_VALUES, TemplateBody, type TemplateDto } from "@mailqivo/shared";
-import { useLocalizedLabels } from "@/lib/use-app-locale";
+import { useLocalizedLabels } from "@/hooks/use-app-locale";
 import { templateApi } from "@/lib/api/content";
 import { ApiError } from "@/lib/api/client";
 import { clearEditorDraft, EmailEditor } from "@/components/edm/email-editor";

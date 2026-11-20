@@ -54,7 +54,6 @@ function Body({ contactIds, onClose, onDone }: Omit<Props, "open">) {
       cancelled = true;
     };
     // 打开时取一次摘要。mutation 身份每轮都会变，不能放进依赖。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contactIds]);
 
   async function confirm() {

@@ -20,7 +20,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { type Layout } from "react-resizable-panels";
 import { INBOUND_CATEGORY_VALUES, type InboundCategory, type ReplyIntent } from "@mailqivo/shared";
-import { useLocalizedLabels } from "@/lib/use-app-locale";
+import { useLocalizedLabels } from "@/hooks/use-app-locale";
 import { useReplies, useReply, useUpdateReply, type ReplyFilters } from "@/lib/api/replies";
 import { ApiError } from "@/lib/api/client";
 import { useIsMobile } from "@/hooks/use-mobile";

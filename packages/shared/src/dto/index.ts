@@ -10,3 +10,4 @@ export * from "./replies.ts";
 export * from "./webhooks.ts";
 export * from "./assets.ts";
 export * from "./mcp.ts";
+export * from "./update.ts";

@@ -13,7 +13,7 @@ import honorifics from "./dicts/english-honorifics.json" with { type: "json" };
  * 字典（dicts/）：
  * - baijiaxing.json：百家姓（简体），拆中文姓
  * - chinese-surname-variants.json：华人姓氏的拼写变体——繁体字对照、拉丁拼写
- * - english-honorifics.json：英文称谓与名后缀，按国家/地区分组
+ * - english-honorifics.json：英文称谓与名后缀（全部地区通用），以及按国家/地区生效的其他拉丁字母语言称谓（localized_prefixes）
  */
 export const SALUTATION_KEY = "称呼";
 
@@ -23,9 +23,20 @@ const TRADITIONAL_TO_SIMPLIFIED: Record<string, string> = surnameVariants.tradit
 const ROMANIZED_SURNAMES = new Set(surnameVariants.romanized);
 const SPACED_COMPOUND_SURNAMES = new Set(["au yeung", "ou yang", "si ma", "si tu", "sze to"]);
 
-const HONORIFIC_PREFIXES = new Set(Object.values(honorifics.prefixes).flat());
+const HONORIFIC_PREFIXES: ReadonlySet<string> = new Set(Object.values(honorifics.prefixes).flat());
 const NAME_SUFFIXES = new Set(Object.values(honorifics.suffixes).flat());
-const PREFIX_MAX_WORDS = Math.max(...[...HONORIFIC_PREFIXES].map((prefix) => prefix.split(" ").length));
+/**
+ * 西、葡、法、意、德、荷等语言的称谓只对该语言地区的联系人生效：Don、Dona、Sig 在英文里也是名字，
+ * 全局匹配会让「Don Johnson」取不到名。英文称谓仍对所有地区生效。
+ */
+const PREFIXES_BY_COUNTRY = new Map<string, ReadonlySet<string>>();
+for (const group of Object.values(honorifics.localized_prefixes)) {
+  for (const country of group.countries) {
+    PREFIXES_BY_COUNTRY.set(country, new Set([...(PREFIXES_BY_COUNTRY.get(country) ?? HONORIFIC_PREFIXES), ...group.prefixes]));
+  }
+}
+const PREFIX_MAX_WORDS = Math.max(...[...HONORIFIC_PREFIXES, ...Object.values(honorifics.localized_prefixes).flatMap((group) => group.prefixes)]
+  .map((prefix) => prefix.split(" ").length));
 
 /** 华人常把姓写在前面（Tan Wei Ming、CHAN Tai Man）的地区。中国大陆走中文规则，不在此列。 */
 const SURNAME_FIRST_REGIONS = new Set(["HK", "MO", "TW", "SG", "MY"]);
@@ -71,12 +82,12 @@ export function titleSuffix(title: string | null | undefined): "总监" | "经�
 }
 
 /** 跳过开头的称谓，返回第一个非称谓词的下标；多词称谓优先（Tan Sri 整体匹配，单独的 Tan 是姓）。 */
-function skipHonorifics(tokens: string[]): number {
+function skipHonorifics(tokens: string[], prefixes: ReadonlySet<string>): number {
   let index = 0;
   while (index < tokens.length) {
     let matched = 0;
     for (let words = Math.min(PREFIX_MAX_WORDS, tokens.length - index); words >= 1; words--) {
-      if (HONORIFIC_PREFIXES.has(tokens.slice(index, index + words).map(dictToken).join(" "))) {
+      if (prefixes.has(tokens.slice(index, index + words).map(dictToken).join(" "))) {
         matched = words;
         break;
       }
@@ -136,8 +147,9 @@ function givenAfterSurname(tokens: string[]): string | undefined {
  * 跳过开头的称谓；「Mr Smith」这种称谓后只剩一个词的，是姓不是名，返回 undefined。
  * 只有缩写（J. Smith）或非拉丁字母名字也返回 undefined。
  * surnameFirst：华人姓在前的地区，「Tan Wei Ming」取 Wei Ming，「CHAN Tai Man, Peter」取 Peter。
+ * country：ISO 二位代码；该地区的本地语言称谓（Sra.、Herr、Mme 等）同样跳过。
  */
-export function englishFirstName(name: string | null | undefined, options: { surnameFirst?: boolean } = {}): string | undefined {
+export function englishFirstName(name: string | null | undefined, options: { surnameFirst?: boolean; country?: string } = {}): string | undefined {
   const value = normalizeText(name);
   if (!value) return undefined;
   const [head = "", ...rest] = value.split(",").map((part) => part.trim());
@@ -146,7 +158,7 @@ export function englishFirstName(name: string | null | undefined, options: { sur
   const tailIsSuffix = tail !== "" && tail.split(/\s+/).every((token) => NAME_SUFFIXES.has(dictToken(token)));
   const lastFirst = tail !== "" && !tailIsSuffix;
   const tokens = lastFirst ? tail.split(/\s+/) : headTokens;
-  const start = skipHonorifics(tokens);
+  const start = skipHonorifics(tokens, (options.country && PREFIXES_BY_COUNTRY.get(options.country)) || HONORIFIC_PREFIXES);
   if (start >= tokens.length) return undefined;
   if (!lastFirst && start > 0 && tokens.length - start < 2) return undefined;
   const named = tokens.slice(start);
@@ -180,5 +192,5 @@ export function resolveSalutation(contact: SalutationContact): string | undefine
     const suffix = titleSuffix(contact.title);
     return surname && suffix ? `${surname}${suffix}` : undefined;
   }
-  return englishFirstName(contact.name, { surnameFirst: SURNAME_FIRST_REGIONS.has(code) });
+  return englishFirstName(contact.name, { surnameFirst: SURNAME_FIRST_REGIONS.has(code), country: code });
 }

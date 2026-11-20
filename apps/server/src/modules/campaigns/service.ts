@@ -81,7 +81,7 @@ export function campaignToDto(row: CampaignRow): CampaignDto {
 }
 
 export async function getCampaignRow(db: Db, id: string): Promise<CampaignRow> {
-  const [row] = await db.select().from(campaigns).where(and(eq(campaigns.id, id), isNull(campaigns.deleted_at)));
+  const [row] = await db.select().from(campaigns).where(eq(campaigns.id, id));
   if (!row) throw Errors.notFound("活动不存在");
   return row;
 }
@@ -94,7 +94,6 @@ export type CampaignListFilter = { status?: CampaignStatus; created_from?: strin
 
 export async function listCampaigns(db: Db, page: PageParams, filter: CampaignListFilter = {}) {
   const where = and(
-    isNull(campaigns.deleted_at),
     filter.status ? eq(campaigns.status, filter.status) : undefined,
     filter.created_from ? gte(campaigns.created_at, new Date(filter.created_from)) : undefined,
     filter.created_to ? lte(campaigns.created_at, new Date(filter.created_to)) : undefined
@@ -168,18 +167,16 @@ export async function updateCampaign(db: Db, id: string, body: CampaignBody, con
   return getCampaign(db, id);
 }
 
+/**
+ * §6.1：草稿与已完成活动确认后永久删除。邮件、统计、追踪事件随外键级联删除；
+ * 联系人状态（退订、退信）属于通讯录，不受影响。
+ */
 export async function deleteCampaign(db: Db, id: string) {
   await db.transaction(async (trx) => {
-    const where = and(eq(campaigns.id, id), isNull(campaigns.deleted_at));
-    const [row] = await trx.select({ status: campaigns.status }).from(campaigns).where(where).for("update");
+    const [row] = await trx.select({ status: campaigns.status }).from(campaigns).where(eq(campaigns.id, id)).for("update");
     if (!row) throw Errors.notFound("活动不存在");
-    if (row.status === "draft") {
-      await trx.delete(campaigns).where(where);
-    } else if (row.status === "completed") {
-      await trx.update(campaigns).set({ deleted_at: new Date() }).where(where);
-    } else {
-      throw Errors.invalidState("只有草稿或已完成的活动可以删除");
-    }
+    if (row.status !== "draft" && row.status !== "completed") throw Errors.invalidState("只有草稿或已完成的活动可以删除");
+    await trx.delete(campaigns).where(eq(campaigns.id, id));
   });
 }
 
@@ -190,7 +187,7 @@ async function resolveChannel(db: Db, row: CampaignRow): Promise<ChannelRow> {
   return channel;
 }
 
-async function validateVariables(db: Db, row: CampaignRow, runtime: ChannelRuntimeConfig): Promise<void> {
+async function validateVariables(db: Db, row: CampaignRow): Promise<void> {
   const [settings, signature, customKeys] = await Promise.all([
     getSettings(db),
     resolveSignature(db, row),
@@ -227,7 +224,7 @@ async function buildSendContext(db: Db, id: string, runtime: CampaignRuntimeConf
   const blocks = row.ai_blocks as { key: string }[];
   if (blocks.length && !runtime.LLM_API_KEY) throw new AppError("AI_DISABLED", "活动包含 AI 区块，但尚未配置 LLM_API_KEY");
   assertUnsubscribeConfigured(runtime);
-  await validateVariables(db, row, runtime);
+  await validateVariables(db, row);
   const filter = { ...ContactFilter.parse(row.contact_filter), statuses: [...CONTACT_STATUS_VALUES] };
   const recipientsRows = await db.select().from(contacts).where(buildContactWhere(filter));
   const activeRows = recipientsRows.filter((contact) => contact.status === "active");

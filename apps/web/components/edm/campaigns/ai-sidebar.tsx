@@ -7,7 +7,7 @@ import { AlertTriangle, Paperclip, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { type CampaignBody, type CampaignPreviewItem } from "@mailqivo/shared";
-import { useLocalizedLabels } from "@/lib/use-app-locale";
+import { useLocalizedLabels } from "@/hooks/use-app-locale";
 import { usePreviewCampaign } from "@/lib/api/campaigns";
 import { ApiError } from "@/lib/api/client";
 import { Badge } from "@/components/ui/badge";

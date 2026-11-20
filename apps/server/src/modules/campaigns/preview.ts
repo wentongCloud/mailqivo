@@ -42,7 +42,7 @@ async function pickContacts(db: Db, row: { contact_filter: unknown; content_rule
     // A more specific rule can win even when the target's own conditions match.
     const picked: ContactRow[] = [];
     let after: string | undefined;
-    do {
+    while (true) {
       const page: ContactRow[] = await db.select().from(contacts)
         .where(and(candidates, after ? gt(contacts.id, after) : undefined)).orderBy(contacts.id).limit(100);
       if (!page.length) break;
@@ -54,7 +54,7 @@ async function pickContacts(db: Db, row: { contact_filter: unknown; content_rule
       }
       after = page.at(-1)!.id;
       if (page.length < 100) break;
-    } while (true);
+    }
     return picked;
   }
   return db.select().from(contacts)

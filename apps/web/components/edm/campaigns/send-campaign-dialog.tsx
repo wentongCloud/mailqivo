@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { type CampaignSendSummary, type ContactStatus } from "@mailqivo/shared";
-import { useLocalizedLabels } from "@/lib/use-app-locale";
+import { useLocalizedLabels } from "@/hooks/use-app-locale";
 import { CalendarClock, Paperclip } from "lucide-react";
 import { useSendCampaign } from "@/lib/api/campaigns";
 import { ApiError } from "@/lib/api/client";

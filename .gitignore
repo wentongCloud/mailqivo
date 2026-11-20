@@ -13,3 +13,10 @@ dist/
 data/
 *.log
 .demo-assets/
+# 设计文件与过程记录在 local-data 分支，不在 main 重建
+docs/
+tasks/
+# 本机代理与工具产物
+.agent/
+.repowise/
+*.srl

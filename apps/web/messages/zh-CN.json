@@ -84,7 +84,9 @@
     "assetsTitle": "附件资产",
     "assetsDesc": "上传并管理邮件附件",
     "complianceTitle": "发送检查",
-    "complianceDesc": "管理敏感词与大批量发送提醒"
+    "complianceDesc": "管理敏感词与大批量发送提醒",
+    "updateTitle": "版本更新",
+    "updateDesc": "升级本机 Mailqivo 应用与 Codex 插件"
   },
   "Settings": {
     "channels": "发送通道",
@@ -94,7 +96,8 @@
     "assets": "附件资产",
     "compliance": "发送检查",
     "language": "界面语言",
-    "languageHint": "作用于管理界面、API 提示和导出列。"
+    "languageHint": "作用于管理界面、API 提示和导出列。",
+    "update": "版本更新"
   },
   "Channels": {
     "title": "发送通道",
@@ -283,7 +286,7 @@
     "deleted": "活动已删除",
     "deleteConfirmTitle": "删除活动？",
     "deleteConfirmDesc": "删除“{name}”后无法恢复。",
-    "deleteCompletedDesc": "将从活动列表移除“{name}”。历史邮件记录会保留，收件人仍可通过原邮件退订。"
+    "deleteCompletedDesc": "永久删除“{name}”？其邮件记录和统计会一并删除且无法恢复。联系人的退订、退信等状态不受影响。"
   },
   "CampaignDetail": {
     "backToList": "活动列表",
@@ -475,34 +478,6 @@
     "sending": "发送中…",
     "close": "关闭",
     "success": "成功"
-  },
-  "ContentRules": {
-    "title": "内容规则",
-    "desc": "按联系人标签组合匹配正文要求与附件；标签多者优先，再按优先级数值小者优先。建议标签命名为「维度:值」。",
-    "empty": "暂无规则，全部收件人使用相同正文且不带附件。",
-    "add": "添加规则",
-    "ruleName": "规则名称",
-    "ruleN": "规则 {n}",
-    "enable": "启用规则",
-    "tags": "标签组合（需全部具备，留空为通用回退）",
-    "instruction": "本类客户正文要求（需要 AI 区块；只发附件可留空）",
-    "instructionPh": "例如：强调制造业 SAP 与业务系统整合，不虚构客户现状",
-    "attachments": "附件（按顺序，最多 {max} 个）",
-    "priority": "优先级",
-    "pickTags": "选择标签",
-    "searchTags": "搜索标签",
-    "noTagMatch": "没有匹配的标签",
-    "fallback": "通用回退（任何联系人都命中）",
-    "removeHint": "点击移除",
-    "missing": "（不存在）",
-    "disabled": "（已停用）",
-    "addAttachment": "添加附件",
-    "noAssets": "暂无启用的附件资产，请先在「设置 → 附件资产」上传。",
-    "moveUp": "上移",
-    "moveDown": "下移",
-    "removeRule": "删除规则",
-    "removeAttachment": "移除附件",
-    "moveAttachmentUp": "附件上移"
   },
   "AiSidebar": {
     "title": "AI 个性化",
@@ -1136,5 +1111,85 @@
     "hr_manager": "人力资源经理",
     "project_manager": "项目经理",
     "product_manager": "产品经理"
+  },
+  "Update": {
+    "title": "版本更新",
+    "description": "确认一次即升级本机 Mailqivo 应用与 Codex 插件，并显示进度与结果。",
+    "recheck": "重新检查",
+    "component": "组件",
+    "installed": "已安装",
+    "candidate": "候选版本",
+    "app": "Mailqivo 应用",
+    "plugin": "Codex 插件",
+    "notInstalled": "未安装",
+    "disabled": "未启用",
+    "source": "候选源：{dir}（提交 {commit}）",
+    "blocked": "当前不能更新",
+    "upToDate": "已是最新版本。",
+    "files": "文件：新增 {added}，修改 {modified}，删除 {removed}",
+    "migrations": "数据库迁移：{list}",
+    "noMigrations": "无数据库迁移",
+    "unknownRecords": "数据库中有 {count} 条候选不认识的迁移记录（不影响本次迁移）。",
+    "sendingHint": "有 {count} 个活动正在发送：停止服务时进行中的邮件会先发完，重启后继续发送。",
+    "upgrade": "升级",
+    "confirmTitle": "确认升级？",
+    "backupDatabase": "更新前备份数据库",
+    "noBackupDatabase": "无迁移，不备份数据库",
+    "noDowntime": "只更新插件，服务不中断",
+    "downtime": "预计服务中断约 {seconds} 秒（按上次更新）",
+    "downtimeUnknown": "预计服务中断数分钟",
+    "reconnecting": "服务重启中，正在重新连接…",
+    "resultApp": "应用：{before} → 目标 {target}，当前 {now}",
+    "resultPlugin": "插件：{before} → 目标 {target}，当前 {now}",
+    "downtimeActual": "实际服务中断 {seconds} 秒",
+    "restartCodex": "插件已更新。请完全退出并重新打开 Codex 后生效。",
+    "retryPlugin": "重试插件",
+    "rollback": "回滚",
+    "rollbackTitle": "回滚到更新前的版本？",
+    "rollbackDesc": "将恢复更新前的应用文件（版本 {version}），重新构建并重启服务。",
+    "restoreDatabase": "同时恢复数据库备份（会丢弃更新后写入的数据）",
+    "mayResend": "恢复数据库后，更新后已发出的邮件会重新进入队列，可能重复发送。确认后无法撤销。",
+    "mode": {
+      "update": "升级任务",
+      "plugin": "插件重试",
+      "rollback": "回滚任务"
+    },
+    "state": {
+      "queued": "等待中",
+      "running": "进行中",
+      "succeeded": "已完成",
+      "rolled_back": "已回滚",
+      "partial": "部分完成",
+      "failed": "失败"
+    },
+    "stage": {
+      "lock": "锁定并复核",
+      "verify_candidate": "候选验收",
+      "backup_files": "备份文件",
+      "stop_services": "停止 Web 与 API",
+      "backup_database": "停止并备份数据库",
+      "apply_files": "替换文件",
+      "install": "安装依赖",
+      "build": "构建",
+      "migrate": "数据库迁移",
+      "start_services": "启动服务",
+      "verify_running": "运行验收",
+      "plugin": "更新 Codex 插件",
+      "finish": "结束"
+    },
+    "blocker": {
+      "SOURCE_NOT_CONFIGURED": "未配置候选源（.env 的 UPDATE_SOURCE_DIR）",
+      "SOURCE_INVALID": "候选源不可用",
+      "SOURCE_UNCOMMITTED": "候选源有未提交的修改",
+      "CODEX_UNAVAILABLE": "无法读取 Codex 插件状态（Codex CLI 不存在或无响应），请稍后重新检查",
+      "APP_DOWNGRADE": "候选应用版本低于已安装版本",
+      "PLUGIN_DOWNGRADE": "候选插件版本低于已安装版本",
+      "PLUGIN_CONTENT_UNVERSIONED": "插件内容已变但版本号未提高",
+      "MIGRATION_SKIPPED": "有候选迁移早于数据库最后一条记录，会被跳过",
+      "DATABASE_AHEAD": "数据库的迁移比候选版本新",
+      "LOCAL_CHANGES": "运行目录有本机修改",
+      "TASK_RUNNING": "已有未结束的更新任务",
+      "CAMPAIGN_PREPARING": "有活动正在准备发送"
+    }
   }
 }

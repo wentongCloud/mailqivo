@@ -11,7 +11,7 @@ import {
   type DedupStrategy,
   type ImportCommitSummary
 } from "@mailqivo/shared";
-import { useLocalizedLabels } from "@/lib/use-app-locale";
+import { useLocalizedLabels } from "@/hooks/use-app-locale";
 import { ApiError } from "@/lib/api/client";
 import { useCommitImport, useCreateImport, useUpdateImportMapping } from "@/lib/api/imports";
 import { useTags } from "@/lib/api/tags";

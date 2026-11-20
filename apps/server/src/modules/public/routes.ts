@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { publicPageText } from "@mailqivo/shared";
 import { messages } from "../../db/schema.ts";
 import { localeFromRequest } from "../../lib/locale.ts";
+import { isUuid } from "../../lib/uuid.ts";
 import { applyUnsubscribe } from "../contacts/service.ts";
 import { getSettings } from "../settings/service.ts";
 
@@ -21,7 +22,7 @@ export const publicRoutes: FastifyPluginAsync = async (app) => {
   app.get("/:tracking_id", { config: { public: true } }, async (request, reply) => {
     const locale = localeFromRequest(request);
     const { tracking_id } = request.params as { tracking_id: string };
-    const [message] = await app.db.select().from(messages).where(eq(messages.tracking_id, tracking_id));
+    const [message] = isUuid(tracking_id) ? await app.db.select().from(messages).where(eq(messages.tracking_id, tracking_id)) : [];
     if (!message) {
       return reply
         .code(404)
@@ -61,7 +62,7 @@ export const publicRoutes: FastifyPluginAsync = async (app) => {
   app.post("/:tracking_id", { config: { public: true } }, async (request, reply) => {
     const locale = localeFromRequest(request);
     const { tracking_id } = request.params as { tracking_id: string };
-    const [message] = await app.db.select().from(messages).where(eq(messages.tracking_id, tracking_id));
+    const [message] = isUuid(tracking_id) ? await app.db.select().from(messages).where(eq(messages.tracking_id, tracking_id)) : [];
     if (!message) {
       return reply
         .code(404)

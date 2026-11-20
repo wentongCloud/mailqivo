@@ -332,3 +332,10 @@ export async function applyUnsubscribe(db: Db, input: ApplyUnsubscribeInput): Pr
     .returning({ id: contacts.id });
   return { applied: rows.length > 0 };
 }
+
+/** 按邮箱找通讯录联系人（邮箱以小写存储）。退信、投诉在原邮件已删除时据此生效。 */
+export async function findContactIdByEmail(db: Db, email: string | null | undefined): Promise<string | null> {
+  if (!email) return null;
+  const [row] = await db.select({ id: contacts.id }).from(contacts).where(eq(contacts.email, email.trim().toLowerCase()));
+  return row?.id ?? null;
+}

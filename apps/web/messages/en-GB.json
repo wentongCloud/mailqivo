@@ -84,7 +84,9 @@
     "assetsTitle": "Attachments",
     "assetsDesc": "Upload and manage email attachments",
     "complianceTitle": "Send checks",
-    "complianceDesc": "Manage sensitive words and large-audience warnings"
+    "complianceDesc": "Manage sensitive words and large-audience warnings",
+    "updateTitle": "Updates",
+    "updateDesc": "Upgrade the local Mailqivo app and the Codex plugin"
   },
   "Settings": {
     "channels": "Sending channels",
@@ -94,7 +96,8 @@
     "assets": "Attachments",
     "compliance": "Send checks",
     "language": "Interface language",
-    "languageHint": "Applies to the admin interface, API messages and export columns."
+    "languageHint": "Applies to the admin interface, API messages and export columns.",
+    "update": "Updates"
   },
   "Channels": {
     "title": "Sending channels",
@@ -283,7 +286,7 @@
     "deleted": "Campaign deleted",
     "deleteConfirmTitle": "Delete campaign?",
     "deleteConfirmDesc": "Delete “{name}”? This cannot be undone.",
-    "deleteCompletedDesc": "Remove “{name}” from the campaign list? Message history will be kept and existing unsubscribe links will continue to work."
+    "deleteCompletedDesc": "Permanently delete “{name}”? Its messages and statistics will be removed and cannot be restored. Contact statuses such as unsubscribed or bounced are not affected."
   },
   "CampaignDetail": {
     "backToList": "Campaign list",
@@ -475,34 +478,6 @@
     "sending": "Sending…",
     "close": "Close",
     "success": "Success"
-  },
-  "ContentRules": {
-    "title": "Content rules",
-    "desc": "Match body instructions and attachments by contact tag sets. More tags win, then lower priority. Prefer “dimension:value” tag names.",
-    "empty": "No rules; everyone gets the same body with no attachments.",
-    "add": "Add rule",
-    "ruleName": "Rule name",
-    "ruleN": "Rule {n}",
-    "enable": "Enable rule",
-    "tags": "Tag set (all required; empty = fallback)",
-    "instruction": "Body requirements for this segment (needs AI blocks; leave empty for attachments only)",
-    "instructionPh": "e.g. emphasise manufacturing SAP integration; do not invent customer facts",
-    "attachments": "Attachments (order, max {max})",
-    "priority": "Priority",
-    "pickTags": "Select tags",
-    "searchTags": "Search tags",
-    "noTagMatch": "No matching tags",
-    "fallback": "Fallback (matches everyone)",
-    "removeHint": "Click to remove",
-    "missing": "(missing)",
-    "disabled": "(disabled)",
-    "addAttachment": "Add attachment",
-    "noAssets": "No enabled attachments yet. Upload under Settings → Attachments first.",
-    "moveUp": "Move up",
-    "moveDown": "Move down",
-    "removeRule": "Remove rule",
-    "removeAttachment": "Remove attachment",
-    "moveAttachmentUp": "Move attachment up"
   },
   "AiSidebar": {
     "title": "AI personalisation",
@@ -1136,5 +1111,85 @@
     "hr_manager": "HR Manager",
     "project_manager": "Project Manager",
     "product_manager": "Product Manager"
+  },
+  "Update": {
+    "title": "Updates",
+    "description": "Confirm once to upgrade the local Mailqivo app and the Codex plugin, then follow the progress and result.",
+    "recheck": "Check again",
+    "component": "Component",
+    "installed": "Installed",
+    "candidate": "Candidate",
+    "app": "Mailqivo app",
+    "plugin": "Codex plugin",
+    "notInstalled": "Not installed",
+    "disabled": "Disabled",
+    "source": "Candidate source: {dir} (commit {commit})",
+    "blocked": "Updating is not possible right now",
+    "upToDate": "You are on the latest version.",
+    "files": "Files: {added} added, {modified} modified, {removed} removed",
+    "migrations": "Database migrations: {list}",
+    "noMigrations": "No database migrations",
+    "unknownRecords": "The database has {count} migration records the candidate does not know (they do not affect this update).",
+    "sendingHint": "{count} campaigns are sending. In-flight messages finish before the services stop, and sending resumes after the restart.",
+    "upgrade": "Upgrade",
+    "confirmTitle": "Upgrade now?",
+    "backupDatabase": "The database is backed up first",
+    "noBackupDatabase": "No migrations, so no database backup",
+    "noDowntime": "Plugin only: no service interruption",
+    "downtime": "Expected interruption: about {seconds} seconds (based on the last update)",
+    "downtimeUnknown": "Expected interruption: a few minutes",
+    "reconnecting": "Services are restarting. Reconnecting…",
+    "resultApp": "App: {before} → target {target}, now {now}",
+    "resultPlugin": "Plugin: {before} → target {target}, now {now}",
+    "downtimeActual": "Actual interruption: {seconds} seconds",
+    "restartCodex": "The plugin was updated. Quit and reopen Codex to load it.",
+    "retryPlugin": "Retry plugin",
+    "rollback": "Roll back",
+    "rollbackTitle": "Roll back to the previous version?",
+    "rollbackDesc": "Restores the app files from before the update (version {version}), rebuilds and restarts the services.",
+    "restoreDatabase": "Also restore the database backup (discards data written after the update)",
+    "mayResend": "Restoring the database puts messages sent after the update back in the queue, so they may be sent again. This cannot be undone.",
+    "mode": {
+      "update": "Upgrade",
+      "plugin": "Plugin retry",
+      "rollback": "Rollback"
+    },
+    "state": {
+      "queued": "Queued",
+      "running": "Running",
+      "succeeded": "Completed",
+      "rolled_back": "Rolled back",
+      "partial": "Partially completed",
+      "failed": "Failed"
+    },
+    "stage": {
+      "lock": "Lock and re-check",
+      "verify_candidate": "Candidate checks",
+      "backup_files": "Back up files",
+      "stop_services": "Stop web and API",
+      "backup_database": "Stop and back up database",
+      "apply_files": "Replace files",
+      "install": "Install dependencies",
+      "build": "Build",
+      "migrate": "Database migrations",
+      "start_services": "Start services",
+      "verify_running": "Running checks",
+      "plugin": "Update Codex plugin",
+      "finish": "Finish"
+    },
+    "blocker": {
+      "SOURCE_NOT_CONFIGURED": "No candidate source configured (UPDATE_SOURCE_DIR in .env)",
+      "SOURCE_INVALID": "The candidate source is unusable",
+      "SOURCE_UNCOMMITTED": "The candidate source has uncommitted changes",
+      "CODEX_UNAVAILABLE": "Cannot read the Codex plugin state (Codex CLI missing or not responding). Check again later",
+      "APP_DOWNGRADE": "The candidate app version is lower than the installed one",
+      "PLUGIN_DOWNGRADE": "The candidate plugin version is lower than the installed one",
+      "PLUGIN_CONTENT_UNVERSIONED": "The plugin content changed without a version increase",
+      "MIGRATION_SKIPPED": "A candidate migration is older than the latest database record and would be skipped",
+      "DATABASE_AHEAD": "The database migrations are newer than the candidate",
+      "LOCAL_CHANGES": "The running directory has local changes",
+      "TASK_RUNNING": "An update task is still running",
+      "CAMPAIGN_PREPARING": "A campaign is being prepared for sending"
+    }
   }
 }

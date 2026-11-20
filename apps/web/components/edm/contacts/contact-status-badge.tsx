@@ -6,7 +6,7 @@ import { invalidReasonLabelI18n, type ContactDto, type ContactStatus } from "@ma
 
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useLocalizedLabels } from "@/lib/use-app-locale";
+import { useLocalizedLabels } from "@/hooks/use-app-locale";
 
 /** §11.5：active 成功色，invalid / bounced 为 destructive，unsubscribed 为 secondary。 */
 export const STATUS_BADGE_VARIANT: Record<ContactStatus, "success" | "destructive" | "secondary"> = {

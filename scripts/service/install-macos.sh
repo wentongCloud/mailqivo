@@ -15,6 +15,7 @@ LABELS=(
   com.mailqivo.postgres
   com.mailqivo.server
   com.mailqivo.web
+  com.mailqivo.updater
 )
 
 mkdir -p "$PROJECT_ROOT/.service/logs" "$LAUNCH_AGENTS_DIR"
@@ -31,6 +32,7 @@ for label in $LABELS; do
     com.mailqivo.postgres) script_name="start-database.sh"; log_name="postgres" ;;
     com.mailqivo.server) script_name="start-server.sh"; log_name="server" ;;
     com.mailqivo.web) script_name="start-web.sh"; log_name="web" ;;
+    com.mailqivo.updater) script_name="start-updater.sh"; log_name="updater" ;;
   esac
   plutil -replace ProgramArguments.1 -string "$PROJECT_ROOT/scripts/service/$script_name" "$rendered_plist"
   plutil -replace WorkingDirectory -string "$PROJECT_ROOT" "$rendered_plist"
@@ -46,7 +48,7 @@ for label in $LABELS; do
   plutil -lint "$rendered_plist" >/dev/null
 done
 
-for label in com.mailqivo.web com.mailqivo.server com.mailqivo.postgres com.mailqivo.codex-env; do
+for label in com.mailqivo.updater com.mailqivo.web com.mailqivo.server com.mailqivo.postgres com.mailqivo.codex-env; do
   /bin/launchctl bootout "$DOMAIN/$label" >/dev/null 2>&1 || true
 done
 
@@ -101,3 +103,6 @@ cd "$PROJECT_ROOT"
 for label in com.mailqivo.server com.mailqivo.web; do
   /bin/launchctl kickstart -k "$DOMAIN/$label"
 done
+
+# 更新程序只注册、不启动；由 API 在用户确认更新后 kickstart（版本更新 §4）。
+/bin/launchctl bootstrap "$DOMAIN" "$LAUNCH_AGENTS_DIR/com.mailqivo.updater.plist"

@@ -21,9 +21,13 @@ export function hasValidSession(request: FastifyRequest): boolean {
   return unsigned.valid && unsigned.value !== null && isSessionValueValid(unsigned.value);
 }
 
+const isApiPath = (path: string | undefined) => !!path && (path === "/api" || path.startsWith("/api/"));
+
 export function registerAuthHook(app: FastifyInstance) {
   app.addHook("onRequest", async (request) => {
-    if (!request.url.startsWith("/api/") && request.url !== "/api") return;
+    // 以路由器实际匹配的路由为准：原始 URL 可用百分号编码（如 /%61pi/...）绕过前缀判断。
+    // 原始 URL 仍参与判断，使未匹配的 /api 路径继续返回 401 而不是 404。
+    if (!isApiPath(request.routeOptions.url) && !isApiPath(request.url)) return;
     if (request.routeOptions.config?.public) return;
     if (!hasValidSession(request)) {
       throw Errors.unauthorized();

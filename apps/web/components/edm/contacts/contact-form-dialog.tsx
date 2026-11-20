@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 import { Star } from "lucide-react";
 import { CITY_KEYS, COUNTRY_KEYS, LANGUAGE_KEYS, MANUAL_CONSENT_SOURCE_VALUES, readProfileField, type ContactDto } from "@mailqivo/shared";
-import { useLocalizedLabels } from "@/lib/use-app-locale";
+import { useLocalizedLabels } from "@/hooks/use-app-locale";
 
 import { ApiError } from "@/lib/api/client";
 import { useCreateContact, useUpdateContact } from "@/lib/api/contacts";

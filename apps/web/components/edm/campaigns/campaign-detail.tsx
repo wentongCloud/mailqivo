@@ -10,7 +10,7 @@ import { ArrowLeft, CircleStop, Edit, Info, Pause, Play, RotateCcw } from "lucid
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { type CampaignStats, type MessageStatus, type RequeueUnknownSummary, type ReasonCode } from "@mailqivo/shared";
-import { useLocalizedLabels } from "@/lib/use-app-locale";
+import { useLocalizedLabels } from "@/hooks/use-app-locale";
 import { useCampaign, useCampaignAction, useCampaignMessages, useCampaignOpens, useCampaignStats, useRequeueUnknown, type CampaignCancelResponse } from "@/lib/api/campaigns";
 import { ApiError } from "@/lib/api/client";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";

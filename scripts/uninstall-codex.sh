@@ -10,6 +10,7 @@ LABELS=(
   com.mailqivo.postgres
   com.mailqivo.server
   com.mailqivo.web
+  com.mailqivo.updater
 )
 
 find_codex() {
@@ -66,7 +67,7 @@ else
   print -u2 "Codex CLI or Node.js was not found. The plugin registration could not be removed automatically."
 fi
 
-for label in com.mailqivo.web com.mailqivo.server com.mailqivo.postgres com.mailqivo.codex-env; do
+for label in com.mailqivo.updater com.mailqivo.web com.mailqivo.server com.mailqivo.postgres com.mailqivo.codex-env; do
   /bin/launchctl bootout "$DOMAIN/$label" >/dev/null 2>&1 || true
 done
 for label in $LABELS; do

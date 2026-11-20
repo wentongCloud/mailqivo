@@ -226,7 +226,9 @@ export const CONFIRM_ACTION_VALUES = [
   "contact_status",
   "contact_delete",
   "import_commit",
-  "message_requeue_unknown"
+  "message_requeue_unknown",
+  "app_update",
+  "app_update_rollback"
 ] as const;
 export const ConfirmActionSchema = z.enum(CONFIRM_ACTION_VALUES);
 export type ConfirmAction = z.infer<typeof ConfirmActionSchema>;

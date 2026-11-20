@@ -8,7 +8,7 @@ import { useTranslations } from "next-intl";
 import type { CampaignListDto } from "@mailqivo/shared";
 import { useCampaigns } from "@/lib/api/campaigns";
 import { ApiError } from "@/lib/api/client";
-import { useLocalizedLabels } from "@/lib/use-app-locale";
+import { useLocalizedLabels } from "@/hooks/use-app-locale";
 import { DeleteCampaignButton } from "./delete-campaign-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

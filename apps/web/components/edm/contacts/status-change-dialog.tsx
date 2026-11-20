@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { CONTACT_STATUS_VALUES, type ContactStatusSummary } from "@mailqivo/shared";
-import { useLocalizedLabels } from "@/lib/use-app-locale";
+import { useLocalizedLabels } from "@/hooks/use-app-locale";
 import { toast } from "sonner";
 
 import { ApiError } from "@/lib/api/client";

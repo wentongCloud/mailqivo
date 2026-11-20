@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, eq, gt, sql } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
+import { isUuid } from "../../lib/uuid.ts";
 import { campaignLinks, contacts, messages, trackingEvents } from "../../db/schema.ts";
 import { getMachineOpenPatterns } from "../settings/service.ts";
 
@@ -54,7 +55,7 @@ export async function recordClick(db: Db, message: MessageRow, linkIdx: number, 
 export const trackingRoutes: FastifyPluginAsync = async (app) => {
   app.get("/o/:tracking_id.gif", { config: { public: true } }, async (request, reply) => {
     const { tracking_id } = request.params as { tracking_id: string };
-    const [message] = await app.db.select().from(messages).where(eq(messages.tracking_id, tracking_id));
+    const [message] = isUuid(tracking_id) ? await app.db.select().from(messages).where(eq(messages.tracking_id, tracking_id)) : [];
     if (message) {
       void recordOpen(app.db, message, { ip: request.ip, userAgent: request.headers["user-agent"] ?? "" }).catch((error) => request.log.error({ error }, "记录打开事件失败"));
     }
@@ -65,7 +66,7 @@ export const trackingRoutes: FastifyPluginAsync = async (app) => {
     const { tracking_id, idx } = request.params as { tracking_id: string; idx: string };
     if (!/^\d+$/.test(idx)) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "链接不存在" } });
     const linkIdx = Number(idx);
-    const [message] = await app.db.select().from(messages).where(eq(messages.tracking_id, tracking_id));
+    const [message] = isUuid(tracking_id) ? await app.db.select().from(messages).where(eq(messages.tracking_id, tracking_id)) : [];
     if (!message) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "链接不存在" } });
     let target = message.click_targets?.[linkIdx];
     if (message.click_targets === null) {

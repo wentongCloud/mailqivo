@@ -16,6 +16,7 @@ import type { Db } from "../../db/client.ts";
 import { contactTags, contacts, importBatches, importRows, tags } from "../../db/schema.ts";
 import { consumeConfirmToken, issueConfirmToken } from "../../lib/confirm-token.ts";
 import { AppError, Errors } from "../../lib/errors.ts";
+import { isUuid } from "../../lib/uuid.ts";
 import { automaticFieldMapping, emailsInMappedRow, mapRawRow, parseImportFile } from "./parser.ts";
 import { scheduleMxProbe } from "./mx.ts";
 
@@ -25,7 +26,6 @@ type CheckedRow = ImportSampleRow & { source_row_no: number | null };
 type Contact = typeof contacts.$inferSelect;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const BLOCKING_ISSUES: ImportIssue[] = ["EMAIL_EMPTY", "EMAIL_INVALID", "DUPLICATE_IN_FILE"];
-const isUuid = (v: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 
 async function existingContactsByEmail(db: Db, emails: string[]): Promise<Map<string, Contact>> {
   const result = new Map<string, Contact>();

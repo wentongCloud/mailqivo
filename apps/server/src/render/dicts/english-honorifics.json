@@ -63,5 +63,31 @@
     "united_states": [
       "facs", "facp"
     ]
+  },
+  "localized_prefixes": {
+    "spanish": {
+      "countries": ["ES", "MX", "AR", "CO", "CL", "PE", "VE", "EC", "GT", "CU", "BO", "DO", "HN", "PY", "SV", "NI", "CR", "PA", "UY", "PR", "GQ"],
+      "prefixes": ["sr", "sra", "srta", "sres", "don", "doña", "dona", "dr", "dra", "lic", "licda", "licdo", "ing", "arq", "mtro", "mtra", "abog", "prof", "profa"]
+    },
+    "portuguese": {
+      "countries": ["PT", "BR", "AO", "MZ", "CV", "GW", "ST", "TL"],
+      "prefixes": ["sr", "sra", "srta", "dom", "dona", "dr", "dra", "engo", "enga", "arq", "prof", "profa"]
+    },
+    "french": {
+      "countries": ["FR", "BE", "CH", "LU", "MC", "CA", "HT", "SN", "CI", "CM", "ML", "BF", "NE", "TG", "BJ", "GA", "CG", "CD", "MG", "GN", "CF", "TD", "DJ", "KM", "RE", "GP", "MQ", "GF", "YT", "NC", "PF", "PM", "BL", "MF", "WF", "MA", "DZ", "TN", "SC", "VU", "BI", "RW"],
+      "prefixes": ["m", "mme", "mmes", "mlle", "me", "mgr", "pr", "dr"]
+    },
+    "italian": {
+      "countries": ["IT", "SM", "VA", "CH"],
+      "prefixes": ["sig", "sigra", "signa", "sigg", "dott", "dottssa", "avv", "ing", "arch", "geom", "rag", "prof", "profssa"]
+    },
+    "german": {
+      "countries": ["DE", "AT", "CH", "LI", "LU", "BE"],
+      "prefixes": ["herr", "frau", "dr", "dr med", "dr phil", "dr ing", "dr rer nat", "prof", "dipl", "dipling", "diplkfm", "mag", "ing"]
+    },
+    "dutch": {
+      "countries": ["NL", "BE", "SR", "AW", "CW", "SX", "BQ"],
+      "prefixes": ["dhr", "mevr", "mw", "mr", "ir", "drs", "dr", "ing", "ds"]
+    }
   }
 }

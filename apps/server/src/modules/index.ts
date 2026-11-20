@@ -14,6 +14,7 @@ import { settingsRoutes } from "./settings/routes.ts";
 import { signatureRoutes } from "./signatures/routes.ts";
 import { tagRoutes } from "./tags/routes.ts";
 import { templateRoutes } from "./templates/routes.ts";
+import { systemRoutes } from "./system/routes.ts";
 import { replyRoutes } from "./replies/routes.ts";
 import { publicRoutes } from "./public/routes.ts";
 import { trackingRoutes } from "./public/tracking.ts";
@@ -34,6 +35,7 @@ export const routeModules: RouteModule[] = [
   { prefix: "/api/replies", plugin: replyRoutes },
   { prefix: "/api/settings", plugin: settingsRoutes },
   { prefix: "/api/signatures", plugin: signatureRoutes },
+  { prefix: "/api/system", plugin: systemRoutes },
   { prefix: "/api/tags", plugin: tagRoutes },
   { prefix: "/api/templates", plugin: templateRoutes },
   { prefix: "/u", plugin: publicRoutes },

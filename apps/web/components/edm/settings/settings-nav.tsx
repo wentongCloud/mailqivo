@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { Braces, FileText, Paperclip, PenLine, Server, ShieldCheck } from "lucide-react";
+import { Braces, CircleArrowUp, FileText, Paperclip, PenLine, Server, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -16,7 +16,8 @@ export function SettingsNav() {
     { title: t("templates"), href: "/settings/templates", icon: FileText },
     { title: t("placeholders"), href: "/settings/placeholders", icon: Braces },
     { title: t("assets"), href: "/settings/assets", icon: Paperclip },
-    { title: t("compliance"), href: "/settings/compliance", icon: ShieldCheck }
+    { title: t("compliance"), href: "/settings/compliance", icon: ShieldCheck },
+    { title: t("update"), href: "/settings/update", icon: CircleArrowUp }
   ];
   return (
     <Card className="py-0">

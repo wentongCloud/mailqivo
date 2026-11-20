@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { format } from "date-fns";
 import { flexRender } from "@tanstack/react-table";
-import { useLocalizedLabels } from "@/lib/use-app-locale";
+import { useLocalizedLabels } from "@/hooks/use-app-locale";
 import {
   type LegacyColumnDef as ColumnDef,
   getCoreRowModel,

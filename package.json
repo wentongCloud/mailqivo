@@ -1,6 +1,6 @@
 {
   "name": "mailqivo",
-  "version": "0.1.0",
+  "version": "0.2.7",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
@@ -13,7 +13,6 @@
     "dev:web": "pnpm --filter @mailqivo/web dev",
     "dev:server": "pnpm --filter @mailqivo/server dev",
     "build": "pnpm -r build",
-    "test": "pnpm -r --if-present test",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
     "db:start": "pnpm --filter @mailqivo/server db:start",

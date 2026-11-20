@@ -1,7 +1,8 @@
 /**
  * `POST /webhooks/bounce`：通用退信 / 投诉上报（§10.2 V1.1）。Bearer `MCP_TOKEN` 鉴权；不实现厂商签名。
  *
- * - hard / soft → applyBounceEffect（message 级幂等）；complaint → applyUnsubscribe。
+ * - hard / soft → applyBounceEffect：能定位原邮件时 message 级幂等；原邮件已随活动删除时按 email 对通讯录联系人生效。
+ * - complaint → applyUnsubscribe。
  * - 只匹配 is_test=false 的 message；不写 inbound_mails；source / diagnostic 只进结构化日志。
  * - 受理（含重复、无状态变化）一律 202 { accepted: true, applied }。
  */
@@ -9,11 +10,11 @@ import type { FastifyPluginAsync } from "fastify";
 import { and, desc, eq } from "drizzle-orm";
 import { BOUNCE_WEBHOOK_REASONS, BounceWebhookBody, type BounceWebhookResult, type ReasonCode } from "@mailqivo/shared";
 import type { Db } from "../../db/client.ts";
-import { contacts, messages } from "../../db/schema.ts";
+import { messages } from "../../db/schema.ts";
 import { applyBounceEffect } from "../../inbound/apply-bounce.ts";
 import { bearerMatches } from "../../lib/bearer.ts";
 import { Errors, parseOrThrow } from "../../lib/errors.ts";
-import { applyUnsubscribe } from "../contacts/service.ts";
+import { applyUnsubscribe, findContactIdByEmail } from "../contacts/service.ts";
 
 type MessageRow = typeof messages.$inferSelect;
 
@@ -43,12 +44,6 @@ async function locateMessage(db: Db, body: BounceWebhookBody): Promise<MessageRo
   return message ?? null;
 }
 
-async function contactIdByEmail(db: Db, email: string | undefined): Promise<string | null> {
-  if (!email) return null;
-  const [row] = await db.select({ id: contacts.id }).from(contacts).where(eq(contacts.email, email.toLowerCase()));
-  return row?.id ?? null;
-}
-
 export const webhookRoutes: FastifyPluginAsync = async (app) => {
   // onRequest：在解析请求体之前鉴权，无 token 时返回 401 而不是 400
   app.addHook("onRequest", async (request) => {
@@ -63,13 +58,15 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
 
     if (body.type === "complaint") {
       // SPEC-GAP: message 已定位但 contact_id 为空（联系人已删除）时，同样按 email 回退查找联系人。
-      const contactId = message?.contact_id ?? await contactIdByEmail(app.db, body.email ?? message?.email);
+      const contactId = message?.contact_id ?? await findContactIdByEmail(app.db, body.email ?? message?.email);
       if (!contactId) throw Errors.notFound("找不到对应的邮件或联系人");
       ({ applied } = await applyUnsubscribe(app.db, { contact_id: contactId }));
     } else {
-      if (!message) throw Errors.notFound("找不到对应的邮件");
+      // 原邮件已随活动删除时，退信按 email 对通讯录联系人生效（§4.1）。
+      const target = message ? { message_id: message.id } : await findContactIdByEmail(app.db, body.email).then((id) => id ? { contact_id: id } : null);
+      if (!target) throw Errors.notFound("找不到对应的邮件或联系人");
       reasonCode = body.reason_code ?? BOUNCE_WEBHOOK_REASONS[body.type][0];
-      ({ applied } = await applyBounceEffect(app.db, { message_id: message.id, bounce_type: body.type, reason_code: reasonCode }));
+      ({ applied } = await applyBounceEffect(app.db, { ...target, bounce_type: body.type, reason_code: reasonCode }));
     }
 
     request.log.info({

@@ -8,6 +8,7 @@ import { classifyInbound } from "./classify.ts";
 import { parseDsn } from "./dsn.ts";
 import { applyBounceEffect } from "./apply-bounce.ts";
 import { applyAutoReply, applyHumanReply, bounceTypeForReason } from "./effects.ts";
+import { findContactIdByEmail } from "../modules/contacts/service.ts";
 import { matchBounce, matchReply } from "./match.ts";
 import { classifyReason } from "./reason-rules.ts";
 import { createInboundClassifier, removeQuotedText, type InboundClassifier, type ReplyClassification } from "./reply-classifier.ts";
@@ -49,6 +50,8 @@ export async function processInboundMail(db: Db, runtime: InboundRuntime, input:
       reason = await ai.classifyBounce({ status: dsn.status, diagnostic: dsn.diagnostic, text: raw.slice(0, 4000) });
     }
   }
+  // 原邮件已随活动删除：退信按 DSN 收件人对通讯录联系人生效（§4.1）。
+  const bounceContactId = category === "bounce" && !matched.message ? await findContactIdByEmail(db, dsn?.recipient) : null;
   let intent: ReplyClassification["intent"] = null;
   let summary: string | null = null;
   let suggestedReply: string | null = null;
@@ -61,7 +64,7 @@ export async function processInboundMail(db: Db, runtime: InboundRuntime, input:
       suggestedReply = result.suggested_reply ? result.suggested_reply.slice(0, 200) : null;
     }
   }
-  const needsReview = category === "bounce" && (!matched.message || reason === "UNKNOWN") || category === "human" && !intent;
+  const needsReview = category === "bounce" && (!matched.message && !bounceContactId || reason === "UNKNOWN") || category === "human" && !intent;
   const values = {
     channel_id: input.channelId,
     imap_uid: input.uid,
@@ -86,13 +89,12 @@ export async function processInboundMail(db: Db, runtime: InboundRuntime, input:
   return db.transaction(async (tx) => {
     const [inserted] = await tx.insert(inboundMails).values(values).onConflictDoNothing().returning();
     if (!inserted) return { duplicate: true as const, mail: null };
-    if (matched.message && dsn?.action?.toLowerCase() !== "delayed") {
-      if (category === "bounce" && reason) {
-        await applyBounceEffect(tx, { message_id: matched.message.id, bounce_type: bounceTypeForReason(reason), reason_code: reason });
-      }
-      if (category === "auto_reply") await applyAutoReply(tx, matched.message, now);
-      if (category === "human") await applyHumanReply(tx, matched.message, intent, now);
+    if (category === "bounce" && reason && dsn?.action?.toLowerCase() !== "delayed") {
+      const target = matched.message ? { message_id: matched.message.id } : bounceContactId ? { contact_id: bounceContactId } : null;
+      if (target) await applyBounceEffect(tx, { ...target, bounce_type: bounceTypeForReason(reason), reason_code: reason });
     }
+    if (matched.message && category === "auto_reply") await applyAutoReply(tx, matched.message, now);
+    if (matched.message && category === "human") await applyHumanReply(tx, matched.message, intent, now);
     return { duplicate: false as const, mail: inserted };
   });
 }

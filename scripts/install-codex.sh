@@ -82,7 +82,7 @@ REGISTERED_ROOT="$(print -r -- "$MARKETPLACES_JSON" | "$NODE_BIN" -e '
 if [[ -n "$REGISTERED_ROOT" && "${REGISTERED_ROOT:A}" != "${MARKETPLACE_ROOT:A}" ]]; then
   fail "mailqivo-local already points to another directory: $REGISTERED_ROOT"
 fi
-for service in codex-env postgres server web; do
+for service in codex-env postgres server web updater; do
   service_plist="$HOME/Library/LaunchAgents/com.mailqivo.$service.plist"
   [[ -e "$service_plist" || -L "$service_plist" ]] || continue
   service_root="$(/usr/bin/plutil -extract WorkingDirectory raw -o - "$service_plist")" || \

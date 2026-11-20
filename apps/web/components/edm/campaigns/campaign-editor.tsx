@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import { canonicalIndustry, CampaignBody, type CampaignDto, type ContactDto, type ContactFilterInput } from "@mailqivo/shared";
 import { createDraftSaver } from "@/lib/campaign-draft-save";
 import { industryOptions } from "@/lib/gics";
-import { useLocalizedLabels } from "@/lib/use-app-locale";
+import { useLocalizedLabels } from "@/hooks/use-app-locale";
 import { useCampaign, useCreateCampaign, useUpdateCampaign } from "@/lib/api/campaigns";
 import { useChannels } from "@/lib/api/channels";
 import { useContacts } from "@/lib/api/contacts";
