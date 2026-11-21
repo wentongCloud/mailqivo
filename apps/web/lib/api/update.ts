@@ -27,8 +27,8 @@ export function useUpdateTask(id: string | null) {
 export function useConfirmUpdate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (confirm_token?: string) =>
-      apiFetch<UpdateConfirmResponse>("/api/system/update", { method: "POST", body: JSON.stringify(confirm_token ? { confirm_token } : {}) }),
+    mutationFn: (request: { confirm_token?: string; overwrite_local_changes?: boolean }) =>
+      apiFetch<UpdateConfirmResponse>("/api/system/update", { method: "POST", body: JSON.stringify(request) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["update-check"] })
   });
 }

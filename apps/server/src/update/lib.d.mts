@@ -21,6 +21,7 @@ export type UpdatePlan = {
   commit: string;
   manifest: Record<string, string>;
   manifestSha256: string;
+  localChanges: Record<string, string | null>;
   appUpdate: boolean;
   pluginUpdate: boolean;
   files: { added: string[]; modified: string[]; removed: string[] };

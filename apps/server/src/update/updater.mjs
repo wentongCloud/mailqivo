@@ -10,12 +10,12 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import net from "node:net";
 import path from "node:path";
-import { promisify } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
 import {
   DEFAULT_CHECKS, INSTALLED_MANIFEST, LABELS, PLUGIN_DIR, PLUGIN_ID, PORTS,
   analyzeMigrations, appVersion, compareVersions, computeCheck, databasePort, findCodex, isProtected, isTaskId, killTree,
-  pluginCacheMatches, pluginStatus, readEnvFile, readJournal, readJson,
-  readTaskStatus, releaseCurrentTask, runCodex, safeRel, sha256File, taskDir, writeJsonAtomic
+  planFiles, pluginCacheMatches, pluginStatus, readCandidate, readEnvFile, readJournal, readJson,
+  readTaskStatus, releaseCurrentTask, runCodex, safeRel, sha256, sha256File, taskDir, writeJsonAtomic
 } from "./lib.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -114,7 +114,7 @@ async function startDatabase() {
 async function restartAfterFailure() {
   try {
     await startDatabase();
-    await startAppServices();
+    await startAppServices(status.app.before);
     return "服务已重新启动";
   } catch (error) {
     return `服务未能重新启动：${error instanceof Error ? error.message : String(error)}`;
@@ -124,18 +124,18 @@ async function httpStatus(url, init) {
   try { return (await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(5000), ...init })).status; } catch { return 0; }
 }
 /** 就绪：API 健康检查的 version 等于候选版本，且登录页返回 200。 */
-async function candidateReady() {
+async function candidateReady(version) {
   try {
     const response = await fetch(`http://127.0.0.1:${PORTS.server}/healthz`, { signal: AbortSignal.timeout(5000) });
     if (response.status !== 200) return false;
     const health = await response.json();
-    if (health.version !== status.app.target) return false;
+    if (health.version !== version) return false;
   } catch { return false; }
   return await httpStatus(`http://127.0.0.1:${PORTS.web}/login`) === 200;
 }
-async function startAppServices() {
+async function startAppServices(version = status.app.target) {
   await startService(LABELS.server); await startService(LABELS.web);
-  await waitFor(candidateReady, 120, "web、server");
+  await waitFor(() => candidateReady(version), 120, "web、server");
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +177,53 @@ async function tableCounts() {
 // 备份数据库，再全量替换程序。失败不修补个别文件，整份再复制一次。不恢复备份。
 // ---------------------------------------------------------------------------
 
-function copyFile(from, to) { fs.mkdirSync(path.dirname(to), { recursive: true }); fs.copyFileSync(from, to); }
+/** 拒绝受保护路径、符号链接及非普通文件，包含所有已存在的父目录。 */
+function managedPath(root, rel) {
+  safeRel(rel);
+  if (isProtected(rel) || rel.split("/").includes(".")) throw new Error(`非法程序文件：${rel}`);
+  let file = root;
+  for (const part of rel.split("/")) {
+    file = path.join(file, part);
+    const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+    if (stat && !(file === path.join(root, rel) ? stat.isFile() : stat.isDirectory())) {
+      throw new Error(`程序路径类型已改变：${rel}`);
+    }
+  }
+  return file;
+}
+
+/** 保留确认时的原始字节与删除记录。仅在整份备份核对通过后发布目录。 */
+function backupLocalChanges(plan) {
+  if (!Object.keys(plan.localChanges).length) return;
+  const backup = path.join(dir, "local-changes");
+  if (fs.existsSync(backup)) {
+    if (!isDeepStrictEqual(readJson(path.join(backup, "manifest.json")), plan.localChanges)) throw new Error("既有备份清单不一致");
+    for (const [rel, hash] of Object.entries(plan.localChanges)) {
+      if (hash !== null && sha256File(managedPath(path.join(backup, "files"), rel)) !== hash) throw new Error(`既有备份校验失败：${rel}`);
+    }
+    return;
+  }
+  const partial = fs.mkdtempSync(path.join(dir, "local-changes.partial-"));
+  for (const [rel, hash] of Object.entries(plan.localChanges)) {
+    const file = managedPath(runDir, rel);
+    if (hash === null) {
+      if (fs.lstatSync(file, { throwIfNoEntry: false })) throw new Error(`已删除的文件重新出现：${rel}`);
+      continue;
+    }
+    const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    try {
+      if (!fs.fstatSync(fd).isFile()) throw new Error(`不是普通文件：${rel}`);
+      const data = fs.readFileSync(fd);
+      if (sha256(data) !== hash) throw new Error(`本机文件在确认后已改变：${rel}`);
+      const dest = path.join(partial, "files", rel);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, data, { flag: "wx", mode: 0o600 });
+      if (sha256File(dest) !== hash) throw new Error(`备份校验失败：${rel}`);
+    } finally { fs.closeSync(fd); }
+  }
+  writeJsonAtomic(path.join(partial, "manifest.json"), plan.localChanges);
+  fs.renameSync(partial, backup);
+}
 
 /** 停库后把 .pgdata 复制到任务目录。配置、data/ 与 .env 不在替换范围内，不另做副本。 */
 async function backupData() {
@@ -204,12 +250,14 @@ async function backupData() {
 function fullReplace(plan) {
   for (const [rel, hash] of Object.entries(plan.manifest)) {
     if (isProtected(rel)) continue;
-    const target = path.join(runDir, safeRel(rel));
-    copyFile(path.join(request.source_dir, rel), target);
+    const target = managedPath(runDir, rel);
+    const source = managedPath(request.source_dir, rel);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(source, target);
     if (sha256File(target) !== hash) throw new Error(`复制后内容不一致：${rel}`);
   }
   for (const rel of plan.files.removed) {
-    if (!isProtected(rel)) fs.rmSync(path.join(runDir, safeRel(rel)), { force: true });
+    if (!isProtected(rel)) fs.rmSync(managedPath(runDir, rel), { force: true });
   }
   return "已全量替换";
 }
@@ -264,9 +312,17 @@ async function updatePlugin(target) {
 
 async function lockAndRecheck() {
   const { check, plan } = await computeCheck({ runDir, sourceDir: request.source_dir, database: await databaseState() });
-  const blockers = check.blockers.filter((blocker) => !(blocker.code === "TASK_RUNNING" && blocker.items?.[0] === id));
+  const approved = request.overwrite_manifest ?? {};
+  if (plan && !isDeepStrictEqual(plan.localChanges, approved)) throw new Error("本机文件在确认后已改变，请重新检查并确认");
+  for (const [rel, hash] of Object.entries(approved)) {
+    managedPath(runDir, rel);
+    if (hash !== null && !/^[0-9a-f]{64}$/.test(hash)) throw new Error(`不支持覆盖的本机文件：${rel}`);
+  }
+  const blockers = check.blockers.filter((blocker) =>
+    !(blocker.code === "TASK_RUNNING" && blocker.items?.[0] === id) &&
+    !(blocker.code === "LOCAL_CHANGES" && isDeepStrictEqual(blocker.items?.slice().sort(), Object.keys(approved).sort())));
   if (blockers.length) throw new Error(`阻止条件：${blockers.map((blocker) => blocker.code).join("、")}`);
-  if (!plan || plan.manifestSha256 !== request.manifest_sha256) throw new Error("候选在确认后发生变化，请重新检查并确认");
+  if (!plan || plan.commit !== request.summary?.source_commit || plan.manifestSha256 !== request.manifest_sha256) throw new Error("候选在确认后发生变化，请重新检查并确认");
   return plan;
 }
 
@@ -320,9 +376,11 @@ function markInstalled(plan) {
 
 /** 全量替换、安装、构建、启动。任一步失败就停掉服务，从头再替换一次。 */
 async function replaceUntilHealthy(plan, stoppedAt) {
+  let alreadyStopped = stoppedAt != null;
   for (;;) {
     try {
-      await stopAppServices();
+      if (!alreadyStopped) await stopAppServices();
+      alreadyStopped = false;
       await stage("apply_files", true, () => fullReplace(plan));
       await stage("install", true, installDeps);
       await stage("build", true, buildApp);
@@ -370,7 +428,17 @@ async function runUpdate() {
   let stoppedAt = null;
   try {
     await stage("stop_services", true, async () => { stoppedAt = Date.now(); await stopAppServices(); });
-    await stage("backup", true, backupData);
+    await stage("backup", true, async () => {
+      const detail = await backupData();
+      backupLocalChanges(plan);
+      const candidate = await readCandidate(request.source_dir);
+      if (!candidate.ok || candidate.uncommitted.length || candidate.commit !== plan.commit || candidate.manifestSha256 !== plan.manifestSha256) {
+        throw new Error("候选在备份期间改变，请重新确认");
+      }
+      const files = await planFiles(runDir, request.source_dir, candidate);
+      if (!isDeepStrictEqual(files.overwriteManifest, plan.localChanges)) throw new Error("本机文件在备份期间改变，请重新确认");
+      return detail;
+    });
   } catch (error) {
     status.error = `${status.error}；${await restartAfterFailure()}`;
     throw error;

@@ -178,7 +178,9 @@ export async function planFiles(runDir, sourceDir, candidate) {
       ...Object.keys(installed.files).filter((rel) => !(rel in running))
     ])].filter((rel) => candidate.manifest[rel] !== running[rel])
     : await unknownToHistory(runDir, sourceDir, [...modified, ...removed]);
-  return { added: added.sort(), modified: modified.sort(), removed: removed.sort(), localChanges: localChanges.sort() };
+  localChanges.sort();
+  const overwriteManifest = Object.fromEntries(localChanges.map((rel) => [rel, running[rel] ?? null]));
+  return { added: added.sort(), modified: modified.sort(), removed: removed.sort(), localChanges, overwriteManifest };
 }
 
 export function readJournal(dir) {
@@ -345,6 +347,7 @@ export async function computeCheck({ runDir, sourceDir, database, readPlugin = (
     app: { installed: installedApp, candidate: candidate.ok ? appVersion(sourceDir) : null },
     plugin: { installed: plugin.installed, enabled: plugin.enabled, candidate: candidate.ok ? pluginVersion(sourceDir) : null },
     files: { added: [], modified: [], removed: [] },
+    can_overwrite_local_changes: false,
     migrations: { pending: [], unknown_records: 0 },
     sending_campaigns: database.sending,
     estimated_downtime_sec: history.downtime,
@@ -376,6 +379,8 @@ export async function computeCheck({ runDir, sourceDir, database, readPlugin = (
   if (database.preparing) blockers.push({ code: "CAMPAIGN_PREPARING", items: [String(database.preparing)] });
   const check = {
     ...base,
+    can_overwrite_local_changes: blockers.length === 1 && blockers[0].code === "LOCAL_CHANGES" &&
+      Object.values(files.overwriteManifest).every((hash) => hash === null || /^[a-f0-9]{64}$/.test(hash)),
     files: { added: files.added, modified: files.modified, removed: files.removed },
     migrations: { pending: migrations.pending, unknown_records: migrations.unknownRecords },
     blockers,
@@ -386,6 +391,7 @@ export async function computeCheck({ runDir, sourceDir, database, readPlugin = (
     commit: candidate.commit,
     manifest: candidate.manifest,
     manifestSha256: candidate.manifestSha256,
+    localChanges: files.overwriteManifest,
     appUpdate,
     pluginUpdate,
     files: { added: files.added, modified: files.modified, removed: files.removed },
@@ -404,6 +410,7 @@ export function updateSummary(check, plan) {
     migrations: check.migrations.pending,
     sending_campaigns: check.sending_campaigns,
     estimated_downtime_sec: check.estimated_downtime_sec,
-    manifest_sha256: plan.manifestSha256
+    manifest_sha256: plan.manifestSha256,
+    overwrite_manifest: plan.localChanges
   };
 }

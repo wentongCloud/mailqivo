@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { sql } from "drizzle-orm";
-import type { ConfirmChallenge, UpdateCheck, UpdateSummary, UpdateTaskMode, UpdateTaskStatus } from "@mailqivo/shared";
+import type { ConfirmChallenge, UpdateCheck, UpdateConfirmBody, UpdateSummary, UpdateTaskMode, UpdateTaskStatus } from "@mailqivo/shared";
 import type { Config } from "../../config.ts";
 import type { Db } from "../../db/client.ts";
 import { REPO_ROOT } from "../../env.ts";
@@ -113,15 +113,17 @@ async function startTask(mode: UpdateTaskMode, request: Record<string, unknown>,
 }
 
 /** §5.2 两步确认后启动更新任务。阻止条件或已是最新时返回 INVALID_STATE。 */
-export async function confirmUpdate(db: Db, config: UpdateConfig, confirmToken?: string): Promise<ConfirmChallenge<UpdateSummary> | { task_id: string }> {
+export async function confirmUpdate(db: Db, config: UpdateConfig, body: UpdateConfirmBody): Promise<ConfirmChallenge<UpdateSummary> | { task_id: string }> {
   const { check: result, plan } = await check(db, config);
-  if (result.blockers.length || !plan) throw Errors.invalidState("当前不能更新", { blockers: result.blockers });
+  const overwrite = body.overwrite_local_changes === true && result.can_overwrite_local_changes;
+  const blockers = result.blockers.filter((blocker) => !(overwrite && blocker.code === "LOCAL_CHANGES"));
+  if (blockers.length || !plan) throw Errors.invalidState("当前不能更新", { blockers });
   if (result.up_to_date) throw Errors.invalidState("已是最新版本");
   const summary = updateSummary(result, plan);
   const params = { action: "app_update" as const, target: { run_dir: REPO_ROOT, source_dir: config.UPDATE_SOURCE_DIR }, summary };
-  if (!confirmToken) return issueConfirmToken(db, params);
-  await consumeConfirmToken(db, { token: confirmToken, ...params });
-  return startTask("update", { source_dir: config.UPDATE_SOURCE_DIR, manifest_sha256: plan.manifestSha256, summary }, {
+  if (!body.confirm_token) return issueConfirmToken(db, params);
+  await consumeConfirmToken(db, { token: body.confirm_token, ...params });
+  return startTask("update", { source_dir: config.UPDATE_SOURCE_DIR, manifest_sha256: plan.manifestSha256, overwrite_manifest: summary.overwrite_manifest, summary }, {
     app: { before: result.app.installed, target: result.app.candidate, now: result.app.installed },
     plugin: { before: result.plugin.installed, target: result.plugin.candidate, now: result.plugin.installed, enabled: result.plugin.enabled }
   });

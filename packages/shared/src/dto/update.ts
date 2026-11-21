@@ -60,6 +60,7 @@ export type UpdateCheck = {
   /** 上次成功更新的停机秒数；没有记录时为 null。 */
   estimated_downtime_sec: number | null;
   blockers: UpdateBlocker[];
+  can_overwrite_local_changes: boolean;
   /** 插件或 Codex 的情况。不阻止更新。 */
   notices: UpdateNotice[];
   up_to_date: boolean;
@@ -77,9 +78,13 @@ export type UpdateSummary = {
   sending_campaigns: number;
   estimated_downtime_sec: number | null;
   manifest_sha256: string;
+  overwrite_manifest: Record<string, string | null>;
 };
 
-export const UpdateConfirmBody = z.object({ confirm_token: z.string().min(1).optional() }).strict();
+export const UpdateConfirmBody = z.object({
+  confirm_token: z.string().min(1).optional(),
+  overwrite_local_changes: z.boolean().optional()
+}).strict();
 export type UpdateConfirmBody = z.infer<typeof UpdateConfirmBody>;
 
 export type UpdateTaskStatus = {

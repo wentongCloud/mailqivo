@@ -40,11 +40,13 @@ export function UpdateManager() {
   const confirm = useConfirmUpdate();
   const [challenge, setChallenge] = React.useState<Challenge<UpdateSummary> | null>(null);
 
+  const confirmedPaths = Object.keys(challenge?.summary.overwrite_manifest ?? {});
+
   function follow(id: string) { setFollowed(id); }
 
   async function requestSummary() {
     try {
-      const result = await confirm.mutateAsync(undefined);
+      const result = await confirm.mutateAsync(overwrite ? { overwrite_local_changes: true } : {});
       if ("confirm_token" in result) setChallenge({ token: result.confirm_token, summary: result.summary });
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : tc("failed"));
@@ -54,7 +56,10 @@ export function UpdateManager() {
   async function startUpdate() {
     if (!challenge) return;
     try {
-      const result = await confirm.mutateAsync(challenge.token);
+      const result = await confirm.mutateAsync({
+        confirm_token: challenge.token,
+        overwrite_local_changes: confirmedPaths.length > 0
+      });
       if ("task_id" in result) { setChallenge(null); follow(result.task_id); }
     } catch (error) {
       const renewed = renewedChallenge<UpdateSummary>(error);
@@ -65,7 +70,10 @@ export function UpdateManager() {
   }
 
   const data = check.data;
-  const canUpdate = !!data && !data.up_to_date && !data.blockers.length && !active;
+  const localChanges = data?.blockers.find((item) => item.code === "LOCAL_CHANGES")?.items ?? [];
+  const overwrite = !!data?.can_overwrite_local_changes && localChanges.length > 0;
+  const blockers = data?.blockers.filter((item) => !(overwrite && item.code === "LOCAL_CHANGES")) ?? [];
+  const canUpdate = !!data && !data.up_to_date && !blockers.length && !active;
   const noteLines: string[] = [];
   if (data) {
     if (!data.up_to_date && data.migrations.pending.length > 0) noteLines.push(t("hasMigrations"));
@@ -124,13 +132,23 @@ export function UpdateManager() {
                   </AlertDescription>
                 </Alert>
               )}
-              {data.blockers.length > 0 && (
+              {overwrite && (
+                <Alert>
+                  <CircleAlert />
+                  <AlertTitle>{t("blocker.LOCAL_CHANGES")}</AlertTitle>
+                  <AlertDescription>
+                    <p>{t("overwriteDescription")}</p>
+                    <ChangedFiles files={localChanges} />
+                  </AlertDescription>
+                </Alert>
+              )}
+              {blockers.length > 0 && (
                 <Alert variant="destructive">
                   <CircleAlert />
                   <AlertTitle>{t("blocked")}</AlertTitle>
                   <AlertDescription>
                     <ul className="list-disc space-y-1 pl-4">
-                      {data.blockers.map((blocker) => (
+                      {blockers.map((blocker) => (
                         <li key={blocker.code}>{t(`blocker.${blocker.code}`)}</li>
                       ))}
                     </ul>
@@ -144,7 +162,7 @@ export function UpdateManager() {
                 </ul>
               )}
               <Button onClick={() => void requestSummary()} disabled={!canUpdate || confirm.isPending}>
-                {confirm.isPending && <Loader2 className="animate-spin" />}{t("upgrade")}
+                {confirm.isPending && <Loader2 className="animate-spin" />}{t(overwrite ? "reviewOverwrite" : "upgrade")}
               </Button>
             </>
           )}
@@ -165,6 +183,12 @@ export function UpdateManager() {
                   <li>{t("sourceCommit", { commit: challenge.summary.source_commit?.slice(0, 12) ?? "—" })}</li>
                   <li>{t("files", challenge.summary.files)}</li>
                   <li>{challenge.summary.migrations.length ? t("migrations", { list: challenge.summary.migrations.join(", ") }) : t("noMigrations")}</li>
+                  {confirmedPaths.length > 0 && (
+                    <li>
+                      {t("overwriteDescription")}
+                      <ChangedFiles files={confirmedPaths} />
+                    </li>
+                  )}
                   <li>{t("noRollback")}</li>
                   <li>{challenge.summary.files.added + challenge.summary.files.modified + challenge.summary.files.removed === 0
                     ? t("noDowntime")
@@ -178,11 +202,19 @@ export function UpdateManager() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={confirm.isPending}>{tc("cancel")}</AlertDialogCancel>
-            <AlertDialogAction disabled={confirm.isPending} onClick={(event) => { event.preventDefault(); void startUpdate(); }}>{t("upgrade")}</AlertDialogAction>
+            <AlertDialogAction disabled={confirm.isPending} onClick={(event) => { event.preventDefault(); void startUpdate(); }}>{t(confirmedPaths.length ? "confirmOverwrite" : "upgrade")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+function ChangedFiles({ files }: { files: string[] }) {
+  return (
+    <ul className="max-h-32 overflow-auto pl-4 font-mono text-xs">
+      {files.map((file) => <li key={file} className="list-disc break-all">{file}</li>)}
+    </ul>
   );
 }
 
