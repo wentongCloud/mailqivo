@@ -8,7 +8,6 @@ import {
   CampaignBody,
   CampaignPreviewBody,
   ContactStatusBody,
-  ImportCommitBody,
   LARGE_AUDIENCE_WARNING_TEXT,
   MCP_ASSET_MAX_BYTES,
   MCP_PREVIEW_TEXT_MAX_CHARS,
@@ -46,7 +45,6 @@ import { getCampaignStats } from "../modules/campaigns/stats.ts";
 import { searchContacts, updateContactStatus } from "../modules/contacts/service.ts";
 import { commitImport, createImport } from "../modules/imports/service.ts";
 import { getReply, listReplies, updateReply } from "../modules/replies/service.ts";
-import { findOrCreateTags } from "../modules/tags/service.ts";
 import { getTemplate } from "../modules/templates/service.ts";
 
 export type McpContext = { db: Db; config: Config; llm: LlmClient | null };
@@ -72,21 +70,21 @@ const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
 function decodeBase64(input: string, maxBytes: number, tooLarge: () => Error): Buffer {
   const text = input.replace(/\s+/g, "");
   if (text.length % 4 !== 0 || !BASE64_RE.test(text)) throw Errors.validation("file_base64 不是合法的 base64", { reason: "BASE64_INVALID" });
-  const padding = text.endsWith("==") ? 2 : text.endsWith("=") ? 1 : 0;
+  const padding = text.length - text.replace(/=+$/, "").length;
   if ((text.length / 4) * 3 - padding > maxBytes) throw tooLarge();
   return Buffer.from(text, "base64");
 }
-
-const pageOf = <T>(items: T[], raw: unknown) => {
-  const page = parsePagination(raw);
-  return toPage(items.slice(page.offset, page.offset + page.limit), items.length, page);
-};
 
 const stripUndefined = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined));
 
 // --- 活动 -------------------------------------------------------------------
 
 const NO_SAMPLE_NOTICE = "尚未满足 AI 样例门槛，当前不能发送：请先用 edm_campaign_preview 预览至少 3 位不同收件人（且每条有收件人的内容规则至少 1 位）。";
+
+/** 发送摘要的返回都经此附上 notices。 */
+function withSendNotices<T extends { summary: CampaignSendSummary }>(payload: T): T & { notices: string[] } {
+  return { ...payload, notices: sendNotices(payload.summary) };
+}
 
 /** send 第一步附带的“必须展示给用户”的提示（纯展示层，不影响摘要与令牌）。 */
 function sendNotices(summary: CampaignSendSummary): string[] {
@@ -147,10 +145,10 @@ const campaignTools = [
   }),
   tool({
     name: "edm_campaign_preview",
-    description: `按当前筛选随机（或按 contact_ids）为 sample 位 active 联系人生成并渲染样例（AI 区块会真实调用 LLM 并写入缓存，样例数量满足门槛才能发送）。每项返回 contact、subject、text（截断到 ${MCP_PREVIEW_TEXT_MAX_CHARS} 字，不返回 html）、ai_content、warnings、content_rule（命中的内容规则）、matched_tags、attachments（仅元数据，不含内容）。含 AI 内容的样例带 notice：「${AI_PREVIEW_NOTICE}」，请原样展示给用户。`,
+    description: `按当前筛选随机（或按 contact_ids；或按 rule_id 只选最终命中该启用规则的联系人，用于补齐缺样例的规则，与 contact_ids 互斥）为 sample 位 active 联系人生成并渲染样例（AI 区块会真实调用 LLM 并写入缓存，样例数量满足门槛才能发送）。每项返回 contact、subject、text（截断到 ${MCP_PREVIEW_TEXT_MAX_CHARS} 字，不返回 html）、ai_content、warnings、content_rule（命中的内容规则）、matched_tags、attachments（仅元数据，不含内容）。含 AI 内容的样例带 notice：「${AI_PREVIEW_NOTICE}」，请原样展示给用户。`,
     schema: McpCampaignPreviewInput,
     handler: async ({ db, config, llm }, args) => {
-      const items = await previewCampaign(db, config, llm, args.campaign_id, parseOrThrow(CampaignPreviewBody, { contact_ids: args.contact_ids, sample: args.sample }));
+      const items = await previewCampaign(db, config, llm, args.campaign_id, parseOrThrow(CampaignPreviewBody, { rule_id: args.rule_id, contact_ids: args.contact_ids, sample: args.sample }));
       return items.map(({ html: _html, text, ...rest }) => ({
         ...rest,
         text: text.slice(0, MCP_PREVIEW_TEXT_MAX_CHARS),
@@ -161,11 +159,12 @@ const campaignTools = [
   }),
   tool({
     name: "edm_campaign_send",
-    description: `发送活动（草稿 → 立即发送或按 send_at 定时）。${MCP_CONFIRM_SENTENCE}第一步返回 { requires_confirmation, confirm_token, summary, notices }：summary 含 recipients、skipped_by_status、channel_daily_remaining、estimated_days、sample_confirmed、large_audience_warning、content_rules_breakdown（每条规则的命中人数、附件、has_sample）和 unmatched_recipients，必须全部展示给用户，并标出 has_sample=false 的规则；notices 里的文字（大量收件人提示、缺样例原因）也必须原样展示。sample_confirmed=false 时不得进行第二步（服务端会拒绝为 INVALID_STATE），应先 edm_campaign_preview。第二步返回 { status }。`,
+    description: `发送活动（草稿 → 立即发送或按 send_at 定时）。${MCP_CONFIRM_SENTENCE}第一步返回 { requires_confirmation, confirm_token, summary, notices }：summary 含 recipients、skipped_by_status、channel_daily_remaining、estimated_days、sample_confirmed、large_audience_warning、content_rules_breakdown（每条规则的命中人数、附件、has_sample）和 unmatched_recipients，必须全部展示给用户，并标出 has_sample=false 的规则；notices 里的文字（大量收件人提示、缺样例原因）也必须原样展示。sample_confirmed=false 时不得进行第二步（服务端会拒绝为 INVALID_STATE），应先 edm_campaign_preview。第二步返回 { status }；若返回 CONFIRM_INVALID（草稿、名单或摘要在确认前已变化，令牌已作废），须不带 confirm_token 重新调用取得新摘要并再次征得用户同意；返回 CHANNEL_ERROR 时活动仍为草稿，须修复通道后重新取得摘要。`,
     schema: McpCampaignSendInput,
     handler: async ({ db, config }, args) => {
+      // CONFIRM_INVALID 不附新令牌（规格 §5.4 第 2 条）：须不带 confirm_token 重新调用以取得新摘要。
       const result = await sendCampaign(db, args.campaign_id, { send_at: args.send_at, confirm_token: args.confirm_token }, config);
-      if ("requires_confirmation" in result) return { ...result, notices: sendNotices(result.summary) };
+      if ("requires_confirmation" in result) return withSendNotices(result);
       return { status: result.status };
     }
   }),
@@ -226,11 +225,7 @@ const contactTools = [
     description: `提交导入批次。${MCP_CONFIRM_SENTENCE}第一步返回 { requires_confirmation, confirm_token, summary }，第二步返回 { created, updated, skipped }。tag_names 为导入联系人要打上的标签名（不存在则创建）。`,
     schema: McpContactImportCommitInput,
     handler: async ({ db }, args) => {
-      // SPEC-GAP: §9 入参是 tag_names，而 REST 的 commit 接收 tag_ids；这里按名称 find-or-create 后转成 ids（标签本身无副作用风险，创建发生在第一步）。
-      const names = args.tag_names ?? [];
-      const byName = await findOrCreateTags(db, names);
-      const tag_ids = names.map((name) => byName.get(name)!).filter(Boolean);
-      return commitImport(db, args.batch_id, parseOrThrow(ImportCommitBody, { dedup_strategy: args.dedup_strategy, tag_ids, confirm_token: args.confirm_token }));
+      return commitImport(db, args.batch_id, { dedup_strategy: args.dedup_strategy, confirm_token: args.confirm_token, tags: { names: args.tag_names ?? [] } });
     }
   }),
   tool({
@@ -259,7 +254,7 @@ const assetTools = [
     name: "edm_asset_list",
     description: "分页列出附件资产元数据（不含内容），可按 enabled 筛选。",
     schema: McpAssetListInput,
-    handler: async ({ db }, args) => pageOf(await listAssets(db, { enabled: args.enabled }), args)
+    handler: async ({ db }, args) => listAssets(db, { enabled: args.enabled }, parsePagination(args))
   }),
   tool({
     name: "edm_asset_disable",

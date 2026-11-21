@@ -43,6 +43,12 @@ export function contactsExportUrl(filter: ContactFilterInput): string {
 }
 
 /** GET /api/contacts（分页 + ContactFilter） */
+/** 活动第二步：当前筛选（含逐人纳入与排除）下的 active 联系人数，与发送摘要 recipients 同口径。 */
+export async function countActiveContacts(filter: ContactFilterInput): Promise<number> {
+  const query = contactsQueryString({ ...filter, statuses: ["active"] }, { page: 1, page_size: 1 });
+  return (await apiFetch<Paginated<ContactDto>>(`/api/contacts?${query}`)).total;
+}
+
 export function useContacts(
   filter: ContactFilterInput,
   page: { page: number; page_size: number },

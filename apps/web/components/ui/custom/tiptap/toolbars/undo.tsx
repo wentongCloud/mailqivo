@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { Button, type ButtonProps } from "@/components/ui/button";
 import {
 	Tooltip,
@@ -14,6 +15,7 @@ import React from "react";
 const UndoToolbar = React.forwardRef<HTMLButtonElement, ButtonProps>(
 	({ className, onClick, children, ...props }, ref) => {
 		const { editor } = useToolbar();
+		const t = useTranslations("Editor");
 
 		return (
 			<Tooltip>
@@ -35,7 +37,7 @@ const UndoToolbar = React.forwardRef<HTMLButtonElement, ButtonProps>(
 					</Button>
 				</TooltipTrigger>
 				<TooltipContent>
-					<span>Undo</span>
+					<span>{t("undo")}</span>
 				</TooltipContent>
 			</Tooltip>
 		);

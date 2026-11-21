@@ -1,6 +1,7 @@
 "use client";
 
 // @ts-nocheck
+import { useTranslations } from "next-intl";
 import { PopoverClose } from "@radix-ui/react-popover";
 import { Trash2, X } from "lucide-react";
 
@@ -19,6 +20,7 @@ import { getUrlFromString } from "../utils";
 const LinkToolbar = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, ...props }, ref) => {
     const { editor } = useToolbar();
+    const t = useTranslations("Editor");
     const [link, setLink] = React.useState("");
 
     const handleSubmit = (e: FormEvent) => {
@@ -48,12 +50,12 @@ const LinkToolbar = React.forwardRef<HTMLButtonElement, ButtonProps>(
                 ref={ref}
                 {...props}>
                 <p className="mr-2 text-base">↗</p>
-                <p className={"decoration-gray-7 underline underline-offset-4"}>Link</p>
+                <p className={"decoration-gray-7 underline underline-offset-4"}>{t("link")}</p>
               </Button>
             </PopoverTrigger>
           </TooltipTrigger>
           <TooltipContent>
-            <span>Link</span>
+            <span>{t("link")}</span>
           </TooltipContent>
         </Tooltip>
 
@@ -68,8 +70,8 @@ const LinkToolbar = React.forwardRef<HTMLButtonElement, ButtonProps>(
               <X className="h-4 w-4" />
             </PopoverClose>
             <form onSubmit={handleSubmit}>
-              <Label>Link</Label>
-              <p className="text-gray-11 text-sm">Attach a link to the selected text</p>
+              <Label>{t("link")}</Label>
+              <p className="text-gray-11 text-sm">{t("linkHint")}</p>
               <div className="mt-3 flex flex-col items-end justify-end gap-3">
                 <Input
                   value={link}
@@ -91,11 +93,11 @@ const LinkToolbar = React.forwardRef<HTMLButtonElement, ButtonProps>(
                         setLink("");
                       }}>
                       <Trash2 className="mr-2 h-4 w-4" />
-                      Remove
+                      {t("remove")}
                     </Button>
                   )}
                   <Button size="sm" className="h-8">
-                    {editor?.getAttributes("link").href ? "Update" : "Confirm"}
+                    {editor?.getAttributes("link").href ? t("update") : t("confirm")}
                   </Button>
                 </div>
               </div>

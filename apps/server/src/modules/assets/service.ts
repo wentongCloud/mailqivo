@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
-import { desc, eq, inArray } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import type { AssetDto, AttachmentSnapshotItem } from "@mailqivo/shared";
 import type { Config } from "../../config.ts";
 import type { Db } from "../../db/client.ts";
 import { assets } from "../../db/schema.ts";
 import { AppError, Errors } from "../../lib/errors.ts";
+import { toPage, type PageParams } from "../../lib/pagination.ts";
 import { getAttachmentMaxTotalMb } from "../settings/service.ts";
 import { sniffAsset } from "./sniff.ts";
 import { assetFilePath, ensureAssetDir } from "./storage.ts";
@@ -95,10 +96,25 @@ export async function createAsset(
   }
 }
 
-export async function listAssets(db: Db, filter: { enabled?: boolean } = {}): Promise<AssetDto[]> {
-  const query = db.select().from(assets);
-  const rows = await (filter.enabled === undefined ? query : query.where(eq(assets.enabled, filter.enabled))).orderBy(desc(assets.created_at), desc(assets.id));
-  return rows.map(toAssetDto);
+const assetOrder = [desc(assets.created_at), desc(assets.id)] as const;
+const assetWhere = (filter: { enabled?: boolean }) => (filter.enabled === undefined ? undefined : eq(assets.enabled, filter.enabled));
+
+/**
+ * 列出附件资产：按 enabled 筛选，按（created_at, id）倒序。传入 page 时在数据库端分页，
+ * total 用同一筛选条件计数；不传时返回全部（REST 列表）。
+ */
+export async function listAssets(db: Db, filter: { enabled?: boolean } = {}, page?: PageParams) {
+  const where = assetWhere(filter);
+  const query = db.select().from(assets).where(where).orderBy(...assetOrder);
+  if (!page) {
+    const rows = await query;
+    return toPage(rows.map(toAssetDto), rows.length, { page: 1, page_size: rows.length });
+  }
+  const [rows, [counted]] = await Promise.all([
+    query.limit(page.limit).offset(page.offset),
+    db.select({ total: sql<number>`count(*)::int` }).from(assets).where(where)
+  ]);
+  return toPage(rows.map(toAssetDto), counted?.total ?? 0, page);
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -190,18 +206,19 @@ export async function assertAssetsUsable(db: Db, config: StorageConfig, ids: str
   const validIds = [...new Set(ids.filter((id) => UUID_RE.test(id)))];
   const rows = validIds.length ? await db.select().from(assets).where(inArray(assets.id, validIds)) : [];
   const byId = new Map(rows.map((r) => [r.id, r]));
-  const problems: { asset_id: string; problem: AssetUsabilityProblem }[] = [];
+  // 有记录时一并返回 filename，供调用方展示问题附件；找不到记录时为 null。
+  const problems: { asset_id: string; filename: string | null; problem: AssetUsabilityProblem }[] = [];
   const result: AssetDto[] = [];
   for (const id of ids) {
     const row = byId.get(id);
-    if (!row) { problems.push({ asset_id: id, problem: "NOT_FOUND" }); continue; }
-    if (!row.enabled) { problems.push({ asset_id: id, problem: "DISABLED" }); continue; }
+    if (!row) { problems.push({ asset_id: id, filename: null, problem: "NOT_FOUND" }); continue; }
+    if (!row.enabled) { problems.push({ asset_id: id, filename: row.filename, problem: "DISABLED" }); continue; }
     try {
       await readVerifiedFile(config, row.id, row.storage_key, { sha256: row.sha256, size_bytes: row.size_bytes });
       result.push(toAssetDto(row));
     } catch (err) {
       if (!(err instanceof AssetUnavailableError)) throw err;
-      problems.push({ asset_id: id, problem: err.reason === "RECORD_MISSING" ? "NOT_FOUND" : err.reason });
+      problems.push({ asset_id: id, filename: row.filename, problem: err.reason === "RECORD_MISSING" ? "NOT_FOUND" : err.reason });
     }
   }
   if (problems.length) throw new AppError("VALIDATION", "存在不可用的附件资产", { assets: problems });

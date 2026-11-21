@@ -11,16 +11,36 @@ import { useSendCampaign } from "@/lib/api/campaigns";
 import { ApiError } from "@/lib/api/client";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { RuleProblems, ruleProblemsOf } from "./rule-problems";
 
-export function SendCampaignDialog({ campaignId, open, onClose, schedule }: { campaignId: string; open: boolean; onClose: () => void; schedule?: string }) {
+export function SendCampaignDialog({
+  campaignId,
+  open,
+  onClose,
+  schedule,
+  scheduleChanged = false
+}: {
+  campaignId: string;
+  open: boolean;
+  onClose: () => void;
+  schedule?: string;
+  /** 本次打开前，过期的定时计划已改为立即发送（设计 §1 第 3 步）。 */
+  scheduleChanged?: boolean;
+}) {
   return (
     <AlertDialog open={open} onOpenChange={(value) => !value && onClose()}>
-      <AlertDialogContent>{open && <Body campaignId={campaignId} onClose={onClose} schedule={schedule} />}</AlertDialogContent>
+      <AlertDialogContent>
+        {open && <Body campaignId={campaignId} onClose={onClose} schedule={schedule} scheduleChanged={scheduleChanged} />}
+      </AlertDialogContent>
     </AlertDialog>
   );
 }
 
-function Body({ campaignId, onClose, schedule }: { campaignId: string; onClose: () => void; schedule?: string }) {
+/**
+ * 设计 §1.2–§1.3：打开即请求摘要；确认时提交该摘要的令牌。
+ * 令牌失效（CONFIRM_INVALID）不接收新令牌，清除旧摘要后由用户重新请求（规格 §5.4 第 2 条）。
+ */
+function Body({ campaignId, onClose, schedule, scheduleChanged }: { campaignId: string; onClose: () => void; schedule?: string; scheduleChanged: boolean }) {
   const t = useTranslations("SendDialog");
   const tc = useTranslations("Common");
   const locale = useLocale();
@@ -29,47 +49,56 @@ function Body({ campaignId, onClose, schedule }: { campaignId: string; onClose: 
   const mutation = useSendCampaign(campaignId);
   const [challenge, setChallenge] = React.useState<{ token: string; summary: CampaignSendSummary } | null>(null);
   const [error, setError] = React.useState("");
+  const [problems, setProblems] = React.useState<ReturnType<typeof ruleProblemsOf>>([]);
   const [notice, setNotice] = React.useState("");
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const effectiveSchedule = schedule && new Date(schedule).getTime() > Date.now() ? schedule : undefined;
-  const scheduleExpired = Boolean(schedule && !effectiveSchedule);
   const body = { ...(effectiveSchedule ? { send_at: effectiveSchedule } : {}) };
   const scheduleLabel = effectiveSchedule
     ? new Date(effectiveSchedule).toLocaleString(locale, { hour12: false })
-    : scheduleExpired
+    : scheduleChanged || schedule
       ? t("immediateExpired")
       : t("immediate");
 
   async function requestSummary() {
     setError("");
+    setProblems([]);
     try {
       const result = await mutation.mutateAsync(body);
-      if ("requires_confirmation" in result) setChallenge({ token: result.confirm_token, summary: result.summary });
+      if ("requires_confirmation" in result) {
+        setNotice("");
+        setChallenge({ token: result.confirm_token, summary: result.summary });
+      }
     } catch (err) {
+      setProblems(ruleProblemsOf(err));
       setError(err instanceof ApiError ? err.message : t("validateFail"));
     }
   }
+
+  // 打开时请求一次摘要；之后的重新请求由按钮触发。
+  const requested = React.useRef(false);
+  React.useEffect(() => {
+    if (requested.current) return;
+    requested.current = true;
+    void requestSummary();
+  });
 
   async function confirm() {
     if (!challenge) return;
     setError("");
     try {
       const result = await mutation.mutateAsync({ ...body, confirm_token: challenge.token });
-      if (!("requires_confirmation" in result)) {
-        toast.success(result.status === "scheduled" ? t("scheduled") : t("queued"));
-        onClose();
-        router.push("/campaigns");
-      }
+      if ("requires_confirmation" in result) return;
+      if (result.status === "failed") toast.error(t("prepareFailed", { reason: result.fail_reason ?? "" }));
+      else toast.success(result.status === "scheduled" ? t("scheduled") : t("queued"));
+      onClose();
+      router.push(result.status === "failed" ? `/campaigns/${result.id}` : "/campaigns");
     } catch (err) {
-      if (err instanceof ApiError && err.body.code === "CONFIRM_INVALID") {
-        const details = err.body.details as { summary?: CampaignSendSummary; confirm_token?: string } | undefined;
-        if (details?.summary && details.confirm_token) {
-          setChallenge({ token: details.confirm_token, summary: details.summary });
-          setNotice(tc("confirmAgain"));
-          return;
-        }
-      }
       setChallenge(null);
+      if (err instanceof ApiError && err.body.code === "CONFIRM_INVALID") {
+        setNotice(t("summaryStale"));
+        return;
+      }
       setError(err instanceof ApiError ? err.message : t("sendFail"));
     }
   }
@@ -83,8 +112,8 @@ function Body({ campaignId, onClose, schedule }: { campaignId: string; onClose: 
   return (
     <>
       <AlertDialogHeader>
-        <AlertDialogTitle>{challenge ? t("title") : t("checkTitle")}</AlertDialogTitle>
-        <AlertDialogDescription>{challenge ? t("confirmDesc") : t("checkDesc")}</AlertDialogDescription>
+        <AlertDialogTitle>{t("title")}</AlertDialogTitle>
+        <AlertDialogDescription>{t("confirmDesc")}</AlertDialogDescription>
       </AlertDialogHeader>
       <div className="bg-muted/50 flex items-start gap-2 rounded-md p-3 text-sm">
         <CalendarClock className="mt-0.5 size-4 shrink-0" />
@@ -139,8 +168,10 @@ function Body({ campaignId, onClose, schedule }: { campaignId: string; onClose: 
           />
         </div>
       )}
+      {!challenge && mutation.isPending && <p className="text-muted-foreground text-sm">{t("loading")}</p>}
       {notice && <p className="text-sm text-orange-600">{notice}</p>}
       {error && <p className="text-destructive text-sm">{error}</p>}
+      <RuleProblems problems={problems} />
       <AlertDialogFooter>
         <AlertDialogCancel>{tc("cancel")}</AlertDialogCancel>
         {challenge ? (
@@ -155,7 +186,7 @@ function Body({ campaignId, onClose, schedule }: { campaignId: string; onClose: 
           </AlertDialogAction>
         ) : (
           <Button disabled={mutation.isPending} onClick={() => void requestSummary()}>
-            {mutation.isPending ? t("checking") : t("next")}
+            {mutation.isPending ? t("loading") : t("retry")}
           </Button>
         )}
       </AlertDialogFooter>

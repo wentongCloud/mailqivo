@@ -6,8 +6,8 @@ import type { z } from "zod";
 import { FileText, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { canonicalIndustry, CONTENT_RULE_LIMITS, type CampaignBody, type CampaignDto } from "@mailqivo/shared";
-import { templateApi } from "@/lib/api/content";
+import { canonicalIndustry, CONTENT_RULE_LIMITS, type CampaignBody, type CampaignDto, type TemplateIssue } from "@mailqivo/shared";
+import { diagnoseTemplate, templateApi } from "@/lib/api/content";
 import { industryOptions } from "@/lib/gics";
 import { useAssets } from "@/lib/api/assets";
 import { useImproveDraft } from "@/lib/api/campaigns";
@@ -130,7 +130,11 @@ function TemplateSelect({ form }: { form: Form }) {
   const t = useTranslations("CampaignEditor");
   const { data: templates = [] } = templateApi.useList();
   const selected = form.watch("template_id") ?? "none";
-  function applyTemplate(templateId: string) {
+  const [issues, setIssues] = React.useState<TemplateIssue[]>([]);
+  // 每次选择递增；诊断返回时只接受仍对应最新一次选择的结果。
+  const selection = React.useRef(0);
+  async function applyTemplate(templateId: string) {
+    const request = ++selection.current;
     if (templateId === "none") {
       form.setValue("template_id", null, { shouldDirty: true });
       return;
@@ -141,9 +145,40 @@ function TemplateSelect({ form }: { form: Form }) {
     form.setValue("html", template.html, { shouldDirty: true });
     form.setValue("editor_mode", template.editor_mode, { shouldDirty: true });
     toast.success(t("templateCopied"));
+    // 规格 §7.2「模板导入诊断」：套用时报告异常语法与无默认值的未知变量；不阻止使用。
+    try {
+      const blocks = (form.getValues("ai_blocks") ?? []).map((block) => block.key).filter(Boolean);
+      const { issues: found } = await diagnoseTemplate(template.id, template.html, blocks);
+      if (request === selection.current) setIssues(found);
+    } catch (err) {
+      if (request === selection.current) toast.error(err instanceof ApiError ? err.message : t("templateDiagnoseFail"));
+    }
   }
   return (
-    <Select value={selected} onValueChange={applyTemplate}>
+    <>
+    <Dialog open={issues.length > 0} onOpenChange={(open) => !open && setIssues([])}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t("templateIssuesTitle")}</DialogTitle>
+          <DialogDescription>{t("templateIssuesDesc")}</DialogDescription>
+        </DialogHeader>
+        <ul className="list-disc space-y-1 pl-5 text-sm">
+          {issues.map((issue, index) => (
+            <li key={index} className="break-all">
+              {issue.kind === "syntax"
+                ? t("templateSyntaxIssue", { fragment: issue.fragment })
+                : t("templateUnknownVar", { key: issue.key })}
+            </li>
+          ))}
+        </ul>
+        <DialogFooter>
+          <Button type="button" onClick={() => setIssues([])}>
+            {t("templateIssuesOk")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    <Select value={selected} onValueChange={(value) => void applyTemplate(value)}>
       <SelectTrigger className="w-44" aria-label={t("importTemplate")}>
         <SelectValue placeholder={t("importTemplate")} />
       </SelectTrigger>
@@ -156,6 +191,7 @@ function TemplateSelect({ form }: { form: Form }) {
         ))}
       </SelectContent>
     </Select>
+    </>
   );
 }
 

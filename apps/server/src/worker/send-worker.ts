@@ -8,8 +8,8 @@ import { classifyReason } from "../inbound/reason-rules.ts";
 import type { MailAttachment, MailChannel, SendReceipt } from "../mail/channel.ts";
 import { AssetUnavailableError, readAssetVerified } from "../modules/assets/index.ts";
 import { createMailerCache, getChannelMailer } from "../modules/channels/service.ts";
-import { loadRenderAssets, renderCampaign, type CampaignRow, type RenderAssets } from "../modules/campaigns/render.ts";
-import { getCampaignRow, markCampaignCompletedIfDone } from "../modules/campaigns/service.ts";
+import { contactForRender, loadRenderAssets, renderCampaign, type CampaignRow, type RenderAssets } from "../modules/campaigns/render.ts";
+import { contactSkipReason, getCampaignRow, markCampaignCompletedIfDone } from "../modules/campaigns/service.ts";
 import { assertCampaignTransition } from "../modules/campaigns/state.ts";
 import { MissingVarError } from "../render/template.ts";
 import { syncUnsubscribeEvents } from "./unsubscribe-sync.ts";
@@ -21,6 +21,7 @@ import { startClaimLoop } from "./claim-loop.ts";
 export type MessageRow = typeof messages.$inferSelect;
 type Runtime = Pick<Config, "APP_ENCRYPTION_KEY" | "MAIL_ID_DOMAIN" | "MAIL_PUBLIC_BASE_URL" | "UNSUBSCRIBE_PUBLIC_URL" | "UNSUBSCRIBE_SHARED_SECRET" | "APP_TIMEZONE" | "SEND_WORKER_CONCURRENCY" | "ASSET_DIR">;
 type ChannelRow = typeof channels.$inferSelect;
+type ContactRow = typeof contacts.$inferSelect;
 type MailerFactory = (db: Db, channelId: string, runtime: Runtime, row?: ChannelRow) => Promise<MailChannel>;
 
 /**
@@ -53,6 +54,11 @@ export type SendWorkerOptions = {
 };
 
 const noWait: RateLimiter = { wait: async () => undefined };
+
+/** SMTP 硬退：联系人置为 bounced。 */
+const HARD_BOUNCE_REASONS: readonly ReasonCode[] = ["ADDR_NOT_EXIST", "ADDR_DOMAIN_INVALID", "ADDR_DISABLED"];
+/** 临时失败：可重试；最终失败时累计联系人 soft_bounce_streak。 */
+const TEMPORARY_REASONS: readonly ReasonCode[] = ["TEMP_MAILBOX_FULL", "TEMP_SERVER_BUSY", "UNKNOWN"];
 
 export async function claimQueuedMessages(db: Db, limit: number): Promise<MessageRow[]> {
   if (limit <= 0) return [];
@@ -100,10 +106,6 @@ async function finishMessage(db: Db, message: MessageRow, values: Partial<typeof
   if (await releaseClaim(db, message, values)) await markCampaignCompletedIfDone(db, message.campaign_id);
 }
 
-function contactSkipReason(status?: string) {
-  return status === "unsubscribed" ? "CONTACT_UNSUBSCRIBED" : status === "bounced" ? "CONTACT_BOUNCED" : "CONTACT_INVALID";
-}
-
 /**
  * §6.3 步骤 5「其余 → failed … 按 §4.1 更新联系人」：SMTP 会话失败（message 未 sent）对联系人的影响。
  * 只从 active 转出：硬退（ADDR_*）→ bounced；TEMP_* / UNKNOWN 最终失败 → streak+1，≥3 → invalid；
@@ -116,13 +118,12 @@ function contactSkipReason(status?: string) {
  */
 export async function applySmtpContactFailure(db: Db, contactId: string | null, reason: ReasonCode, now = new Date()) {
   if (!contactId) return;
-  const hard = ["ADDR_NOT_EXIST", "ADDR_DOMAIN_INVALID", "ADDR_DISABLED"].includes(reason);
-  if (hard) {
+  if (HARD_BOUNCE_REASONS.includes(reason)) {
     await db.update(contacts).set({ status: "bounced", invalid_reason: reason, updated_at: now })
       .where(and(eq(contacts.id, contactId), eq(contacts.status, "active")));
     return;
   }
-  if (!["TEMP_MAILBOX_FULL", "TEMP_SERVER_BUSY", "UNKNOWN"].includes(reason)) return;
+  if (!TEMPORARY_REASONS.includes(reason)) return;
   await db.transaction(async (tx) => {
     const [contact] = await tx.select().from(contacts).where(and(eq(contacts.id, contactId), eq(contacts.status, "active"))).for("update");
     if (!contact) return;
@@ -157,7 +158,7 @@ async function reserveDailyQuota(db: Db, channel: CampaignRow["channel_id"], day
 }
 
 function receiptIsTemporary(receipt: Extract<SendReceipt, { ok: false }>, reason: ReasonCode) {
-  return ["TEMP_MAILBOX_FULL", "TEMP_SERVER_BUSY", "UNKNOWN"].includes(reason) || (!!receipt.code && receipt.code >= 400 && receipt.code < 500);
+  return TEMPORARY_REASONS.includes(reason) || (!!receipt.code && receipt.code >= 400 && receipt.code < 500);
 }
 
 /**
@@ -215,8 +216,13 @@ async function reserveSmtpHandoff(
   });
 }
 
+/** 已渲染（sent / failed）的 message 记录所用联系人字段与 AI 内容。 */
+function renderedVars(contact: ContactRow, message: MessageRow) {
+  return { contact: contactForRender(contact), ai_content: message.ai_content };
+}
+
 type PreparedSend = {
-  contact: typeof contacts.$inferSelect;
+  contact: ContactRow;
   campaign: CampaignRow;
   rendered: Awaited<ReturnType<typeof renderCampaign>>;
   attachments: MailAttachment[];
@@ -315,7 +321,7 @@ async function prepareSend(
   let rendered: Awaited<ReturnType<typeof renderCampaign>>;
   try {
     rendered = await renderCampaign(db, campaign, {
-      contact: { email: contact.email, name: contact.name, company: contact.company, title: contact.title, custom_fields: contact.custom_fields as Record<string, string> },
+      contact: contactForRender(contact),
       trackingId: message.tracking_id,
       aiContent: message.ai_content as Record<string, string>
     }, runtime, caches ? await caches.renderAssets.get(`${campaign.id}:${campaign.signature_id ?? "default"}`, () => loadRenderAssets(db, campaign)) : undefined);
@@ -331,7 +337,7 @@ async function prepareSend(
   if (Buffer.byteLength(rendered.html, "utf8") > 500 * 1024) {
     await finishMessage(db, message, {
       status: "failed", failure_reason: "POLICY_CONTENT", smtp_response: "最终 HTML 超过 500KB",
-      rendered_vars: { contact: { email: contact.email, name: contact.name, company: contact.company, title: contact.title, custom_fields: contact.custom_fields as Record<string, string> }, ai_content: message.ai_content }, rendered_subject: rendered.subject
+      rendered_vars: renderedVars(contact, message), rendered_subject: rendered.subject
     });
     return null;
   }
@@ -364,7 +370,7 @@ async function deliver(db: Db, message: MessageRow, options: SendWorkerOptions, 
     await finishMessage(db, message, {
       status: "sent", sent_at: now, smtp_code: receipt.code, smtp_response: receipt.response,
       failure_reason: null,
-      rendered_vars: { contact: { email: contact.email, name: contact.name, company: contact.company, title: contact.title, custom_fields: contact.custom_fields as Record<string, string> }, ai_content: message.ai_content },
+      rendered_vars: renderedVars(contact, message),
       rendered_subject: rendered.subject
     });
     return;
@@ -382,7 +388,8 @@ async function deliver(db: Db, message: MessageRow, options: SendWorkerOptions, 
     return;
   }
 
-  if (receiptIsTemporary(receipt, reason) && message.attempt + 1 < 4) {
+  const temporary = receiptIsTemporary(receipt, reason);
+  if (temporary && message.attempt + 1 < 4) {
     const attempt = message.attempt + 1;
     await releaseClaim(db, message, {
       status: "queued", attempt, smtp_code: receipt.code, smtp_response: receipt.response,
@@ -394,9 +401,9 @@ async function deliver(db: Db, message: MessageRow, options: SendWorkerOptions, 
   await db.transaction(async (tx) => {
     const trx = tx as unknown as Db;
     const failed = await releaseClaim(trx, message, {
-      status: "failed", attempt: receiptIsTemporary(receipt, reason) ? message.attempt + 1 : message.attempt,
+      status: "failed", attempt: temporary ? message.attempt + 1 : message.attempt,
       smtp_code: receipt.code, smtp_response: receipt.response, failure_reason: reason,
-      rendered_vars: { contact: { email: contact.email, name: contact.name, company: contact.company, title: contact.title, custom_fields: contact.custom_fields as Record<string, string> }, ai_content: message.ai_content },
+      rendered_vars: renderedVars(contact, message),
       rendered_subject: rendered.subject
     });
     if (failed) await applySmtpContactFailure(trx, message.contact_id, reason, now);
@@ -409,39 +416,6 @@ export async function recoverStaleSending(db: Db, olderThan = new Date(Date.now(
     .where(and(eq(messages.status, "sending"), sql`${messages.locked_at} < ${olderThan}`)).returning({ campaign_id: messages.campaign_id });
   for (const campaignId of new Set(rows.map((row) => row.campaign_id))) await markCampaignCompletedIfDone(db, campaignId);
   return rows.length;
-}
-
-export async function runSendWorkerOnce(db: Db, runtime: Runtime, options: SendWorkerOptions = {}, syncWhenIdle = true) {
-  const claimed = await claimQueuedMessages(db, options.concurrency ?? runtime.SEND_WORKER_CONCURRENCY);
-  let inFlight: Promise<void> | undefined;
-  function synchronize() {
-    inFlight ??= syncUnsubscribeEvents(db, runtime, options.fetchUnsubscribeEvents).finally(() => { inFlight = undefined; });
-    return inFlight;
-  }
-  if (!claimed.length && syncWhenIdle) await synchronize();
-  if (!claimed.length) return 0;
-  const lease = claimed[0]!.send_lease_id!;
-  const ids = claimed.map((message) => message.id);
-  let renewing: Promise<void> | undefined;
-  const heartbeat = setInterval(() => {
-    if (renewing) return;
-    renewing = db.update(messages).set({ locked_at: sql`now()` })
-      .where(and(inArray(messages.id, ids), eq(messages.send_lease_id, lease), eq(messages.status, "sending")))
-      .then(() => undefined)
-      .catch((error: unknown) => { console.error("[send-worker] 发送租约续期失败", error); })
-      .finally(() => { renewing = undefined; });
-  }, 60_000);
-  heartbeat.unref();
-  try {
-    const results = await Promise.allSettled(claimed.map((message) => processClaimedMessage(db, message, runtime, options, synchronize)));
-    const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
-    for (const failure of failures.slice(1)) console.error("[send-worker] message 处理失败", failure.reason);
-    if (failures.length) throw failures[0]!.reason;
-    return claimed.length;
-  } finally {
-    clearInterval(heartbeat);
-    await renewing;
-  }
 }
 
 export function startSendWorker(db: Db, runtime: Runtime, options: SendWorkerOptions = {}) {

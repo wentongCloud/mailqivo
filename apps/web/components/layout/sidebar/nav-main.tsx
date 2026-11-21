@@ -51,7 +51,7 @@ type NavItem = {
 }[];
 
 /** 侧边栏导航结构（§11.1 第 5 条：4 个分组）；文案由 i18n 注入。 */
-function useNavItems(): NavGroup[] {
+export function useNavItems(): NavGroup[] {
   const t = useTranslations("Nav");
   return [
     {
@@ -76,29 +76,6 @@ function useNavItems(): NavGroup[] {
   ];
 }
 
-/** @deprecated 静态中文快照；运行时请用 NavMain / useNavItems。 */
-export const navItems: NavGroup[] = [
-  {
-    title: "Campaigns",
-    items: [
-      { title: "Campaign list", href: "/campaigns", icon: MailIcon },
-      { title: "Replies", href: "/replies", icon: InboxIcon }
-    ]
-  },
-  {
-    title: "Contacts",
-    items: [{ title: "People", href: "/contacts", icon: UsersIcon }]
-  },
-  {
-    title: "Analytics",
-    items: [{ title: "Analytics", href: "/stats", icon: ChartPieIcon }]
-  },
-  {
-    title: "Settings",
-    items: [{ title: "Settings", href: "/settings", icon: SettingsIcon }]
-  }
-];
-
 /** 当前路径是否属于该导航项（含其子页面，例如 /campaigns/new 属于 /campaigns） */
 function isActivePath(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(href + "/");
@@ -107,6 +84,7 @@ function isActivePath(pathname: string, href: string) {
 export function NavMain() {
   const pathname = usePathname();
   const { isMobile } = useSidebar();
+  const t = useTranslations("Nav");
   const navItems = useNavItems();
 
   return (
@@ -185,12 +163,12 @@ export function NavMain() {
                   )}
                   {!!item.isComing && (
                     <SidebarMenuBadge className="peer-hover/menu-button:text-foreground opacity-50">
-                      即将推出
+                      {t("comingSoon")}
                     </SidebarMenuBadge>
                   )}
                   {!!item.isNew && (
                     <SidebarMenuBadge className="border border-green-400 text-green-600 peer-hover/menu-button:text-green-600">
-                      新
+                      {t("new")}
                     </SidebarMenuBadge>
                   )}
                   {!!item.isDataBadge && (

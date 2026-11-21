@@ -34,9 +34,6 @@ export function exportColumns(locale: AppLocale = DEFAULT_LOCALE) {
   ] as const;
 }
 
-/** @deprecated 使用 exportColumns(locale) */
-export const EXPORT_COLUMNS = exportColumns(DEFAULT_LOCALE);
-
 /**
  * 按筛选导出 xlsx（含状态与原因列）。
  * 状态、原因写当前 locale 文案；标签用顿号“、”连接；时间为 ISO 8601。

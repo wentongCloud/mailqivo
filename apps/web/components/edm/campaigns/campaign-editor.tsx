@@ -15,7 +15,7 @@ import { industryOptions } from "@/lib/gics";
 import { useLocalizedLabels } from "@/hooks/use-app-locale";
 import { useCampaign, useCreateCampaign, useUpdateCampaign } from "@/lib/api/campaigns";
 import { useChannels } from "@/lib/api/channels";
-import { useContacts } from "@/lib/api/contacts";
+import { countActiveContacts, useContacts } from "@/lib/api/contacts";
 import { signatureApi } from "@/lib/api/content";
 import { useTags } from "@/lib/api/tags";
 import { ApiError } from "@/lib/api/client";
@@ -61,12 +61,18 @@ import {
 } from "@/components/ui/stepper";
 import { Switch } from "@/components/ui/switch";
 import { ComposePanel } from "./compose-panel";
+import { RuleProblems, ruleProblemsOf } from "./rule-problems";
 import { SendCampaignDialog } from "./send-campaign-dialog";
 import { TestSendDialog } from "./test-send-dialog";
 
 type FormValues = z.input<ReturnType<typeof buildCampaignFormSchema>>;
 type Form = UseFormReturn<FormValues>;
 type Step = 1 | 2 | 3;
+
+/** 定时时间已到或已过。 */
+function isPast(value: string | null | undefined): boolean {
+  return !!value && new Date(value).getTime() <= Date.now();
+}
 
 function buildCampaignFormSchema(t: ReturnType<typeof useTranslations<"CampaignEditor">>) {
   return CampaignBody.extend({
@@ -110,6 +116,11 @@ export function CampaignEditor({ id }: { id?: string }) {
   const [step, setStep] = React.useState<Step>(1);
   const [highestStep, setHighestStep] = React.useState<Step>(1);
   const [sendOpen, setSendOpen] = React.useState(false);
+  // 设计 §1 第 3 步：过期定时可能被自动保存静默清为立即发送，记录下来，在打开试发或发送对话框时提示。
+  const scheduleCleared = React.useRef(false);
+  const [scheduleChanged, setScheduleChanged] = React.useState(false);
+  const lastSaveError = React.useRef<unknown>(null);
+  const [audienceTotal, setAudienceTotal] = React.useState<number | null>(null);
   const [testOpen, setTestOpen] = React.useState(false);
   const schema = React.useMemo(() => buildCampaignFormSchema(t), [t]);
   const initialValues = useInitialValues(t);
@@ -168,6 +179,7 @@ export function CampaignEditor({ id }: { id?: string }) {
         if (!silent) toast.error(t("formInvalid"));
         return null;
       }
+      lastSaveError.current = null;
       try {
         const body = parsed.data;
         const currentId = savedId.current;
@@ -175,6 +187,7 @@ export function CampaignEditor({ id }: { id?: string }) {
           ? await update.mutateAsync({ id: currentId, body })
           : await create.mutateAsync(body);
         savedId.current = saved.id;
+        if (body.send_at && !saved.send_at) scheduleCleared.current = true;
         return {
           id: saved.id,
           apply() {
@@ -187,6 +200,7 @@ export function CampaignEditor({ id }: { id?: string }) {
           }
         };
       } catch (err) {
+        lastSaveError.current = err;
         if (!silent) toast.error(err instanceof ApiError ? err.message : t("saveFail"));
         return null;
       }
@@ -205,29 +219,81 @@ export function CampaignEditor({ id }: { id?: string }) {
     if (step === 1) {
       if (!(await form.trigger(["name", "subject", "send_at"]))) return;
       const planned = form.getValues("send_at");
-      if (planned && new Date(planned).getTime() <= Date.now()) {
+      if (isPast(planned)) {
         toast.error(t("schedulePast"));
         return;
       }
-    } else if (step === 2 && !(await form.trigger("contact_filter"))) return;
-    const savedId = await saveDraft();
-    if (!savedId) return;
+    } else if (step === 2) {
+      if (!(await form.trigger("contact_filter"))) return;
+    }
+
+    for (;;) {
+      const checked = step === 2 ? await audienceReady() : undefined;
+      if (checked === null) return;
+      if (checked !== undefined && checked !== audienceKey()) continue;
+      if (!(await saveDraft())) return;
+      if (checked === undefined || checked === audienceKey()) break;
+    }
     const next = (step + 1) as Step;
     setStep(next);
     setHighestStep((current) => Math.max(current, next) as Step);
   }
 
+  function audienceKey() {
+    return JSON.stringify(form.getValues("contact_filter") ?? {});
+  }
+
+  /**
+   * 设计 §1 第 2 步：目标客群没有有效联系人时不能进入第三步。「下一步」与顶部步骤共用此检查。
+   * 计数请求失败时保留当前步骤，并提示原因与重试。
+   * 计数期间客群条件被修改时，旧计数作废，按最新条件重新计数，避免放行零人草稿。
+   */
+  async function audienceReady(): Promise<string | null> {
+    for (;;) {
+      const filter = form.getValues("contact_filter") ?? {};
+      const checked = JSON.stringify(filter);
+      let count: number;
+      try {
+        count = await countActiveContacts(filter);
+      } catch (err) {
+        if (checked !== audienceKey()) continue;
+        toast.error(t("audienceCountFail"), { description: err instanceof ApiError ? err.message : undefined });
+        return null;
+      }
+      if (checked !== audienceKey()) continue;
+      if (count > 0) return checked;
+      toast.error(t("audienceZero"));
+      return null;
+    }
+  }
+
+  async function goToStep(target: Step) {
+    if (target === 3 && step !== 3) {
+      const checked = await audienceReady();
+      if (checked === null || checked !== audienceKey()) return;
+    }
+    setStep(target);
+  }
+
   async function openAction(action: "send" | "test") {
     const planned = form.getValues("send_at");
-    if (planned && new Date(planned).getTime() <= Date.now()) {
+    if (isPast(planned)) {
       form.setValue("send_at", null, { shouldDirty: true });
-      toast.warning(t("scheduleExpired"));
+      scheduleCleared.current = true;
     }
     const savedId = await saveDraft(true);
     if (!savedId) {
-      toast.error(t("saveDraftFirst"));
+      const error = lastSaveError.current;
+      const problems = ruleProblemsOf(error);
+      toast.error(error instanceof ApiError ? error.message : t("saveDraftFirst"), {
+        description: problems.length ? <RuleProblems problems={problems} /> : undefined
+      });
       return;
     }
+    const changed = scheduleCleared.current;
+    scheduleCleared.current = false;
+    if (changed) toast.warning(t("scheduleExpired"));
+    setScheduleChanged(changed);
     if (action === "send") setSendOpen(true);
     else setTestOpen(true);
   }
@@ -293,7 +359,7 @@ export function CampaignEditor({ id }: { id?: string }) {
                 <StepperItem>
                   <StepperTrigger
                     disabled={item.id > highestStep}
-                    onClick={() => setStep(item.id)}
+                    onClick={() => void goToStep(item.id)}
                     aria-current={active ? "step" : undefined}
                   >
                     <StepperIndicator active={active} completed={completed}>
@@ -315,7 +381,7 @@ export function CampaignEditor({ id }: { id?: string }) {
       <Form {...form}>
         <form onSubmit={form.handleSubmit(() => saveDraft())}>
           {step === 1 && <BasicInfoStep form={form} />}
-          {step === 2 && <AudienceStep form={form} />}
+          {step === 2 && <AudienceStep form={form} onTotalChange={setAudienceTotal} />}
           {step === 3 && (
             <ContentStep form={form} campaign={campaign} campaignId={campaignId} onAutosave={saveDraft} />
           )}
@@ -347,8 +413,11 @@ export function CampaignEditor({ id }: { id?: string }) {
                   </Button>
                 </>
               )}
+              {step === 2 && audienceTotal === 0 && (
+                <p className="text-destructive self-center text-sm">{t("audienceZero")}</p>
+              )}
               {step < 3 ? (
-                <Button type="button" disabled={saving} onClick={goNext}>
+                <Button type="button" disabled={saving || (step === 2 && audienceTotal === 0)} onClick={goNext}>
                   {t("next")}
                   <ArrowRight />
                 </Button>
@@ -369,6 +438,7 @@ export function CampaignEditor({ id }: { id?: string }) {
             open={sendOpen}
             onClose={() => setSendOpen(false)}
             schedule={typeof sendAt === "string" ? sendAt : undefined}
+            scheduleChanged={scheduleChanged}
           />
           <TestSendDialog campaignId={campaignId} open={testOpen} onClose={() => setTestOpen(false)} />
         </>
@@ -599,7 +669,7 @@ function audienceCriterion(filter: ContactFilterInput | undefined) {
   return { industry, tag };
 }
 
-function AudienceStep({ form }: { form: Form }) {
+function AudienceStep({ form, onTotalChange }: { form: Form; onTotalChange: (total: number | null) => void }) {
   const t = useTranslations("CampaignEditor");
   const tc = useTranslations("Contacts");
   const tIndustry = useTranslations("Industry");
@@ -631,6 +701,11 @@ function AudienceStep({ form }: { form: Form }) {
     enabled: confirmed !== null
   });
   const total = data?.total ?? 0;
+  // 预览名单的 active 总数；未查询或条件已改未重查时为 null，由「下一步」实时计数。
+  const knownTotal = confirmed !== null && !criteriaChanged && data ? data.total : null;
+  React.useEffect(() => {
+    onTotalChange(knownTotal);
+  }, [knownTotal, onTotalChange]);
   const pageCount = Math.max(1, Math.ceil(total / AUDIENCE_PAGE_SIZE));
   if (data && page > pageCount) setPage(pageCount);
 

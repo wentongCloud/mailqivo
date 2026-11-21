@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { CampaignBody, CampaignDto, CampaignPreviewBody, CampaignPreviewItem, CampaignListDto, CampaignMessageDto, CampaignOpensByHour, CampaignSendBody, CampaignSendSummary, CampaignStats, CampaignTestSendBody, CampaignTestSendResult, ConfirmChallenge, MessageStatus, Paginated, RequeueUnknownBody, RequeueUnknownResult, RequeueUnknownSummary } from "@mailqivo/shared";
+import type { CampaignBody, CampaignDto, CampaignPrerequisites, CampaignPreviewBody, CampaignPreviewItem, CampaignListDto, CampaignMessageDto, CampaignOpensByHour, CampaignSendBody, CampaignSendSummary, CampaignStats, CampaignTestSendBody, CampaignTestSendResult, ConfirmChallenge, MessageStatus, Paginated, RequeueUnknownBody, RequeueUnknownResult, RequeueUnknownSummary } from "@mailqivo/shared";
 import { apiFetch } from "@/lib/api/client";
 
 const all = ["campaigns"] as const;
@@ -18,6 +18,11 @@ export function useCampaigns(page = 1) {
     queryFn: () => apiFetch<Paginated<CampaignListDto>>(`/api/campaigns?page=${page}&page_size=20`),
     placeholderData: keepPreviousData
   });
+}
+
+/** 规格 §6.2 第 1 条：新建活动前读取缺项（只含缺项名称，不含配置值）。 */
+export function useCampaignPrerequisites() {
+  return useQuery({ queryKey: [...all, "prerequisites"], queryFn: () => apiFetch<CampaignPrerequisites>("/api/campaigns/prerequisites") });
 }
 
 export function useCampaign(id?: string) {

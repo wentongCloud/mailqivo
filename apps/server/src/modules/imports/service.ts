@@ -16,6 +16,7 @@ import type { Db } from "../../db/client.ts";
 import { contactTags, contacts, importBatches, importRows, tags } from "../../db/schema.ts";
 import { consumeConfirmToken, issueConfirmToken } from "../../lib/confirm-token.ts";
 import { AppError, Errors } from "../../lib/errors.ts";
+import { isUniqueViolation } from "../tags/service.ts";
 import { isUuid } from "../../lib/uuid.ts";
 import { automaticFieldMapping, emailsInMappedRow, mapRawRow, parseImportFile } from "./parser.ts";
 import { scheduleMxProbe } from "./mx.ts";
@@ -112,7 +113,7 @@ function makeReport(rows: CheckedRow[]): ImportReport {
   for (const row of rows) for (const issue of row.issues) issueCounts[issue] += 1;
   return {
     total: rows.length,
-    valid: rows.filter((row) => !row.issues.some((issue) => BLOCKING_ISSUES.includes(issue))).length,
+    valid: rows.filter(isImportable).length,
     issues: issueCounts,
     sample_rows: rows.slice(0, 20).map(({ row_no, raw, data, issues }) => ({ row_no, raw, data, issues })),
     column_samples: columnSamples(rows)
@@ -180,7 +181,38 @@ function isImportable(row: ImportSampleRow): boolean {
   return !row.issues.some((issue) => BLOCKING_ISSUES.includes(issue));
 }
 
-async function commitPlan(db: Db, id: string, body: ImportCommitBody) {
+/** 导入要打的标签：REST 按标签 id，MCP 按标签名（不存在的名称在确认后创建）。 */
+export type ImportTagSelection = { ids: string[] } | { names: string[] };
+export type ImportCommitInput = Pick<ImportCommitBody, "dedup_strategy" | "confirm_token"> & { tags: ImportTagSelection };
+
+/**
+ * 解析导入标签。`lock` 为 true 时锁住命中的标签行到事务结束：名称选择用 FOR SHARE 阻止改名与删除，
+ * id 选择用 FOR KEY SHARE 阻止删除。只在写入阶段末尾加锁，避免整次导入期间阻塞标签管理。
+ */
+async function resolveImportTags(db: Db, selection: ImportTagSelection, lock: boolean) {
+  if ("names" in selection) {
+    const names = [...new Set(selection.names)].sort();
+    const query = db.select().from(tags).where(inArray(tags.name, names)).orderBy(tags.id);
+    const rows = names.length ? await (lock ? query.for("share") : query) : [];
+    const byName = new Map(rows.map(row => [row.name, row.id]));
+    return {
+      ids: rows.map(row => row.id), pending: names.filter(name => !byName.has(name)),
+      target: { tag_ids: [], tag_names: names.map(name => ({ name, id: byName.get(name) ?? null })) }
+    };
+  }
+  const ids = [...new Set(selection.ids.map(id => id.toLowerCase()))].sort();
+  if (ids.length) {
+    const query = db.select({ id: tags.id }).from(tags).where(inArray(tags.id, ids)).orderBy(tags.id);
+    const found = await (lock ? query.for("key share") : query);
+    if (found.length !== ids.length) throw Errors.validation("包含不存在的导入标签");
+  }
+  return { ids, pending: [] as string[], target: { tag_ids: [...selection.ids].sort() } };
+}
+
+/** 写入阶段发现导入标签与确认时不同：回滚写入，改为签发新令牌。 */
+class ImportTagsChanged extends Error {}
+
+async function commitPlan(db: Db, id: string, body: ImportCommitInput) {
   const batch = await getBatch(db, id, true);
   if (batch.status !== "previewed") throw Errors.invalidState("该导入批次已处理");
   const rows = await db.select().from(importRows).where(eq(importRows.batch_id, id)).orderBy(importRows.row_no);
@@ -191,6 +223,7 @@ async function commitPlan(db: Db, id: string, body: ImportCommitBody) {
   const created = importable.length - existingCount;
   const updated = body.dedup_strategy === "skip" ? 0 : existingCount;
   const skipped = checked.length - importable.length + (body.dedup_strategy === "skip" ? existingCount : 0);
+  const selected = await resolveImportTags(db, body.tags, false);
   const summary: ImportCommitSummary = {
     filename: batch.filename,
     total: checked.length,
@@ -198,9 +231,9 @@ async function commitPlan(db: Db, id: string, body: ImportCommitBody) {
     updated,
     skipped,
     dedup_strategy: body.dedup_strategy,
-    tag_count: body.tag_ids.length
+    tag_count: selected.ids.length + selected.pending.length
   };
-  return { batch, known, importable, summary };
+  return { batch, known, importable, summary, selected };
 }
 
 async function addTags(db: Db, contactIds: string[], tagIds: string[]) {
@@ -211,18 +244,105 @@ async function addTags(db: Db, contactIds: string[], tagIds: string[]) {
   }
 }
 
-export async function commitImport(db: Db, id: string, body: ImportCommitBody) {
+/**
+ * 在保存点内写入联系人与标签。标签在写入末尾才加锁并与确认时的目标比较；
+ * 不一致或待建名称被并发创建时抛出，由调用方回滚整个保存点。
+ */
+async function writeImport(trx: Db, id: string, body: ImportCommitInput, plan: Awaited<ReturnType<typeof commitPlan>>) {
+  const createdEmails: string[] = [];
+  // 批量写入（原先逐行 INSERT / UPDATE，10 万行即 10 万次往返）。
+  const taggedIds: string[] = [];
+  let actualCreated = 0;
+  let actualUpdated = 0;
+  let actualSkipped = plan.summary.total - plan.importable.length;
+  const toUpdate: { id: string; name: string | null; company: string | null; title: string | null; custom_fields: Record<string, string> }[] = [];
+  const toCreate: MappedImportData[] = [];
+  const planExisting = (existing: Contact, data: MappedImportData) => {
+    if (body.dedup_strategy === "skip") {
+      actualSkipped += 1;
+      return;
+    }
+    actualUpdated += 1;
+    if (body.dedup_strategy === "overwrite") {
+      const custom = { ...(existing.custom_fields as Record<string, string>) };
+      for (const [key, value] of Object.entries(data.custom_fields ?? {})) if (value !== "") custom[key] = value;
+      toUpdate.push({
+        id: existing.id,
+        name: data.name || existing.name,
+        company: data.company || existing.company,
+        title: data.title || existing.title,
+        custom_fields: normalizeCountryField(custom)
+      });
+    }
+    taggedIds.push(existing.id);
+  };
+  for (const row of plan.importable) {
+    const existing = plan.known.get(row.data.email!);
+    if (existing) planExisting(existing, row.data);
+    else toCreate.push(row.data);
+  }
+  for (let i = 0; i < toCreate.length; i += 1000) {
+    const chunk = toCreate.slice(i, i + 1000);
+    const created = await trx.insert(contacts).values(chunk.map((data) => ({
+      email: data.email!,
+      name: data.name || null,
+      company: data.company || null,
+      title: data.title || null,
+      custom_fields: data.custom_fields ?? {},
+      source: "import",
+      consent_source: "import",
+      consent_at: sql`now()`,
+      import_batch_id: id
+    }))).onConflictDoNothing({ target: contacts.email }).returning({ id: contacts.id, email: contacts.email });
+    for (const row of created) {
+      taggedIds.push(row.id);
+      createdEmails.push(row.email);
+      actualCreated += 1;
+    }
+    // 预检之后被并发创建的同邮箱联系人：不再整批失败，按去重策略当作已存在处理。
+    if (created.length < chunk.length) {
+      const inserted = new Set(created.map((row) => row.email));
+      const raced = chunk.filter((data) => !inserted.has(data.email!));
+      const now = await existingContactsByEmail(trx, raced.map((data) => data.email!));
+      for (const data of raced) {
+        const existing = now.get(data.email!);
+        if (existing) planExisting(existing, data);
+      }
+    }
+  }
+  for (let i = 0; i < toUpdate.length; i += 1000) {
+    const rows = sql.join(toUpdate.slice(i, i + 1000).map((row) =>
+      sql`(${row.id}::uuid, ${row.name}::text, ${row.company}::text, ${row.title}::text, ${JSON.stringify(row.custom_fields)}::jsonb)`), sql`, `);
+    await trx.execute(sql`
+      UPDATE contacts SET name = v.name, company = v.company, title = v.title, custom_fields = v.custom_fields, updated_at = now()
+      FROM (VALUES ${rows}) AS v(id, name, company, title, custom_fields)
+      WHERE contacts.id = v.id
+    `);
+  }
+  const locked = await resolveImportTags(trx, body.tags, true);
+  if (!isDeepStrictEqual(locked.target, plan.selected.target)) throw new ImportTagsChanged();
+  const finalTagIds = [...locked.ids];
+  if (locked.pending.length) {
+    // 唯一索引保护尚不存在的名称；并发创建同名标签时 INSERT 失败，整个保存点回滚。
+    const added = await trx.insert(tags).values(locked.pending.map(name => ({ name }))).returning({ id: tags.id });
+    finalTagIds.push(...added.map(row => row.id));
+  }
+  await addTags(trx, taggedIds, finalTagIds);
+  await trx
+    .update(importBatches)
+    .set({ status: "committed", dedup_strategy: body.dedup_strategy, tag_ids: finalTagIds, committed_at: new Date() })
+    .where(eq(importBatches.id, id));
+  return { counts: { created: actualCreated, updated: actualUpdated, skipped: actualSkipped }, createdEmails };
+}
+
+export async function commitImport(db: Db, id: string, body: ImportCommitInput) {
   const createdEmails: string[] = [];
   const result = await db.transaction(async (tx) => {
     const trx = tx as unknown as Db;
     const plan = await commitPlan(trx, id, body);
-    if (body.tag_ids.length) {
-      const found = await trx.select({ id: tags.id }).from(tags).where(inArray(tags.id, body.tag_ids));
-      if (found.length !== new Set(body.tag_ids).size) throw Errors.validation("包含不存在的导入标签");
-    }
     const target = {
       batch_id: id, field_mapping: plan.batch.field_mapping,
-      dedup_strategy: body.dedup_strategy, tag_ids: [...body.tag_ids].sort()
+      dedup_strategy: body.dedup_strategy, ...plan.selected.target
     };
     const challenge = { action: "import_commit" as const, target, summary: plan.summary };
     if (!body.confirm_token) return issueConfirmToken(trx, challenge);
@@ -233,81 +353,19 @@ export async function commitImport(db: Db, id: string, body: ImportCommitBody) {
       if (error instanceof AppError && error.code === "CONFIRM_INVALID") return error;
       throw error;
     }
-    // 批量写入（原先逐行 INSERT / UPDATE，10 万行即 10 万次往返）。
-    const taggedIds: string[] = [];
-    let actualCreated = 0;
-    let actualUpdated = 0;
-    let actualSkipped = plan.summary.total - plan.importable.length;
-    const toUpdate: { id: string; name: string | null; company: string | null; title: string | null; custom_fields: Record<string, string> }[] = [];
-    const toCreate: MappedImportData[] = [];
-    const planExisting = (existing: Contact, data: MappedImportData) => {
-      if (body.dedup_strategy === "skip") {
-        actualSkipped += 1;
-        return;
-      }
-      actualUpdated += 1;
-      if (body.dedup_strategy === "overwrite") {
-        const custom = { ...(existing.custom_fields as Record<string, string>) };
-        for (const [key, value] of Object.entries(data.custom_fields ?? {})) if (value !== "") custom[key] = value;
-        toUpdate.push({
-          id: existing.id,
-          name: data.name || existing.name,
-          company: data.company || existing.company,
-          title: data.title || existing.title,
-          custom_fields: normalizeCountryField(custom)
-        });
-      }
-      taggedIds.push(existing.id);
-    };
-    for (const row of plan.importable) {
-      const existing = plan.known.get(row.data.email!);
-      if (existing) planExisting(existing, row.data);
-      else toCreate.push(row.data);
+    try {
+      const written = await tx.transaction((savepoint) => writeImport(savepoint as unknown as Db, id, body, plan));
+      createdEmails.push(...written.createdEmails);
+      return written.counts;
+    } catch (error) {
+      // 写入整体回滚；令牌已消费，签发基于最新标签的新令牌并提交。
+      if (!(error instanceof ImportTagsChanged) && !isUniqueViolation(error, "tags_name_key")) throw error;
+      const latest = await resolveImportTags(trx, body.tags, false);
+      const next = await issueConfirmToken(trx, { ...challenge, target: { ...target, ...latest.target } });
+      return new AppError("CONFIRM_INVALID", "导入标签已发生变化，请重新确认最新摘要", {
+        reason: "TARGET_MISMATCH", summary: next.summary, confirm_token: next.confirm_token
+      });
     }
-    for (let i = 0; i < toCreate.length; i += 1000) {
-      const chunk = toCreate.slice(i, i + 1000);
-      const created = await trx.insert(contacts).values(chunk.map((data) => ({
-        email: data.email!,
-        name: data.name || null,
-        company: data.company || null,
-        title: data.title || null,
-        custom_fields: data.custom_fields ?? {},
-        source: "import",
-        consent_source: "import",
-        consent_at: sql`now()`,
-        import_batch_id: id
-      }))).onConflictDoNothing({ target: contacts.email }).returning({ id: contacts.id, email: contacts.email });
-      for (const row of created) {
-        taggedIds.push(row.id);
-        createdEmails.push(row.email);
-        actualCreated += 1;
-      }
-      // 预检之后被并发创建的同邮箱联系人：不再整批失败，按去重策略当作已存在处理。
-      if (created.length < chunk.length) {
-        const inserted = new Set(created.map((row) => row.email));
-        const raced = chunk.filter((data) => !inserted.has(data.email!));
-        const now = await existingContactsByEmail(trx, raced.map((data) => data.email!));
-        for (const data of raced) {
-          const existing = now.get(data.email!);
-          if (existing) planExisting(existing, data);
-        }
-      }
-    }
-    for (let i = 0; i < toUpdate.length; i += 1000) {
-      const rows = sql.join(toUpdate.slice(i, i + 1000).map((row) =>
-        sql`(${row.id}::uuid, ${row.name}::text, ${row.company}::text, ${row.title}::text, ${JSON.stringify(row.custom_fields)}::jsonb)`), sql`, `);
-      await trx.execute(sql`
-        UPDATE contacts SET name = v.name, company = v.company, title = v.title, custom_fields = v.custom_fields, updated_at = now()
-        FROM (VALUES ${rows}) AS v(id, name, company, title, custom_fields)
-        WHERE contacts.id = v.id
-      `);
-    }
-    await addTags(trx, taggedIds, body.tag_ids);
-    await trx
-      .update(importBatches)
-      .set({ status: "committed", dedup_strategy: body.dedup_strategy, tag_ids: body.tag_ids, committed_at: new Date() })
-      .where(eq(importBatches.id, id));
-    return { created: actualCreated, updated: actualUpdated, skipped: actualSkipped };
   });
   if (result instanceof AppError) throw result;
   if (createdEmails.length) scheduleMxProbe(db, createdEmails);

@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import React from "react";
 import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -22,12 +23,13 @@ export const HeadingsToolbar = React.forwardRef<
   React.ButtonHTMLAttributes<HTMLButtonElement>
 >(({ className, ...props }, ref) => {
   const { editor } = useToolbar();
+  const t = useTranslations("Editor");
   const isMobile = useMediaQuery("(max-width: 640px)");
   const activeLevel = levels.find((level) => editor?.isActive("heading", { level }));
 
   if (isMobile) {
     return (
-      <MobileToolbarGroup label={activeLevel ? `H${activeLevel}` : "Normal"}>
+      <MobileToolbarGroup label={activeLevel ? `H${activeLevel}` : t("normal")}>
         <MobileToolbarItem
           onClick={() => {
             if (editor?.isActive("heading") && editor) {
@@ -35,7 +37,7 @@ export const HeadingsToolbar = React.forwardRef<
             }
           }}
           active={!editor?.isActive("heading")}>
-          Normal
+          {t("normal")}
         </MobileToolbarItem>
         {levels.map((level) => (
           <MobileToolbarItem
@@ -65,7 +67,7 @@ export const HeadingsToolbar = React.forwardRef<
               )}
               ref={ref}
               {...props}>
-              {activeLevel ? `H${activeLevel}` : "Normal"}
+              {activeLevel ? `H${activeLevel}` : t("normal")}
               <ChevronDown className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
@@ -80,7 +82,7 @@ export const HeadingsToolbar = React.forwardRef<
                 "flex h-fit items-center gap-2",
                 !editor?.isActive("heading") && "bg-accent"
               )}>
-              Normal
+              {t("normal")}
             </DropdownMenuItem>
             {levels.map((level) => (
               <DropdownMenuItem
@@ -97,7 +99,7 @@ export const HeadingsToolbar = React.forwardRef<
         </DropdownMenu>
       </TooltipTrigger>
       <TooltipContent>
-        <span>Headings</span>
+        <span>{t("headings")}</span>
       </TooltipContent>
     </Tooltip>
   );

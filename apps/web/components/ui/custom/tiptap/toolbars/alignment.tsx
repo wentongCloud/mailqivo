@@ -2,6 +2,7 @@
 
 import { AlignCenter, AlignJustify, AlignLeft, AlignRight, Check, ChevronDown } from "lucide-react";
 import { useMediaQuery } from "@uidotdev/usehooks";
+import { useTranslations } from "next-intl";
 import { MobileToolbarGroup, MobileToolbarItem } from "./mobile-toolbar-group";
 
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ import { useToolbar } from "./toolbar-provider";
 
 export const AlignmentTooolbar = () => {
   const { editor } = useToolbar();
+  const t = useTranslations("Editor");
   const isMobile = useMediaQuery("(max-width: 640px)");
   const handleAlign = (value: string) => {
     (editor?.chain().focus() as any).setTextAlign(value).run();
@@ -42,26 +44,10 @@ export const AlignmentTooolbar = () => {
   };
 
   const alignmentOptions = [
-    {
-      name: "Left Align",
-      value: "left",
-      icon: <AlignLeft className="h-4 w-4" />
-    },
-    {
-      name: "Center Align",
-      value: "center",
-      icon: <AlignCenter className="h-4 w-4" />
-    },
-    {
-      name: "Right Align",
-      value: "right",
-      icon: <AlignRight className="h-4 w-4" />
-    },
-    {
-      name: "Justify Align",
-      value: "justify",
-      icon: <AlignJustify className="h-4 w-4" />
-    }
+    { name: t("alignLeft"), value: "left", icon: <AlignLeft className="h-4 w-4" /> },
+    { name: t("alignCenter"), value: "center", icon: <AlignCenter className="h-4 w-4" /> },
+    { name: t("alignRight"), value: "right", icon: <AlignRight className="h-4 w-4" /> },
+    { name: t("alignJustify"), value: "justify", icon: <AlignJustify className="h-4 w-4" /> }
   ];
 
   const findIndex = (value: string) => {
@@ -71,7 +57,7 @@ export const AlignmentTooolbar = () => {
   if (isMobile) {
     return (
       <MobileToolbarGroup
-        label={alignmentOptions[findIndex(currentTextAlign())]?.name ?? "Left Align"}>
+        label={alignmentOptions[findIndex(currentTextAlign())]?.name ?? t("alignLeft")}>
         {alignmentOptions.map((option, index) => (
           <MobileToolbarItem
             key={index}
@@ -97,7 +83,7 @@ export const AlignmentTooolbar = () => {
             </Button>
           </DropdownMenuTrigger>
         </TooltipTrigger>
-        <TooltipContent>Text Alignment</TooltipContent>
+        <TooltipContent>{t("alignment")}</TooltipContent>
       </Tooltip>
       <DropdownMenuContent
         loop

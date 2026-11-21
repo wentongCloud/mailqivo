@@ -10,6 +10,7 @@ import { Errors } from "../lib/errors.ts";
 import { createMcpServer } from "./server.ts";
 
 const methodNotAllowed = { jsonrpc: "2.0", error: { code: -32000, message: "Method not allowed." }, id: null };
+const internalError = { jsonrpc: "2.0", error: { code: -32603, message: "Internal server error" }, id: null };
 
 export const mcpRoutes: FastifyPluginAsync = async (app) => {
   // onRequest：先于请求体解析鉴权，错误或缺失的 token 一律 401
@@ -28,8 +29,19 @@ export const mcpRoutes: FastifyPluginAsync = async (app) => {
       void transport.close();
       void server.close();
     });
-    await server.connect(transport);
-    await transport.handleRequest(request.raw, reply.raw, request.body);
+    try {
+      await server.connect(transport);
+      await transport.handleRequest(request.raw, reply.raw, request.body);
+    } catch (err) {
+      // 已 hijack，Fastify 的错误处理器不会再回复；这里自行返回 JSON-RPC 错误，避免客户端挂起。
+      request.log.error({ err }, "mcp transport failed");
+      if (!reply.raw.headersSent) {
+        reply.raw.writeHead(500, { "content-type": "application/json" });
+        reply.raw.end(JSON.stringify(internalError));
+      } else if (!reply.raw.writableEnded) {
+        reply.raw.end();
+      }
+    }
   });
 
   // 无状态模式不提供服务端推送流与会话终止

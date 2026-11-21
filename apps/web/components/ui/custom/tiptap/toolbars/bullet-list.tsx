@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { List } from "lucide-react";
 import React from "react";
 
@@ -11,6 +12,7 @@ import { useToolbar } from "./toolbar-provider";
 const BulletListToolbar = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, onClick, children, ...props }, ref) => {
     const { editor } = useToolbar();
+    const t = useTranslations("Editor");
 
     return (
       <Tooltip>
@@ -35,7 +37,7 @@ const BulletListToolbar = React.forwardRef<HTMLButtonElement, ButtonProps>(
           </Button>
         </TooltipTrigger>
         <TooltipContent>
-          <span>Bullet list</span>
+          <span>{t("bulletList")}</span>
         </TooltipContent>
       </Tooltip>
     );

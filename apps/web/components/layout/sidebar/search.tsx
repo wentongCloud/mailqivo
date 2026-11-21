@@ -2,8 +2,8 @@
 
 import React, { useEffect, useState } from "react";
 import { SearchIcon } from "lucide-react";
-import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 
 import {
   CommandDialog,
@@ -24,12 +24,13 @@ import {
 } from "@/components/ui/sidebar";
 import { Label } from "@/components/ui/label";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
-import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { navItems } from "@/components/layout/sidebar/nav-main";
+import { useNavItems } from "@/components/layout/sidebar/nav-main";
 
 export default function Search() {
   const [open, setOpen] = useState(false);
   const router = useRouter();
+  const t = useTranslations("Nav");
+  const navItems = useNavItems();
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -47,11 +48,11 @@ export default function Search() {
       <SidebarGroup className="py-0 group-data-[collapsible=icon]:hidden">
         <SidebarGroupContent className="relative">
           <Label htmlFor="sidebar-search" className="sr-only">
-            搜索
+            {t("search")}
           </Label>
           <SidebarInput
             id="sidebar-search"
-            placeholder="搜索..."
+            placeholder={t("searchPh")}
             className="cursor-pointer pl-8"
             readOnly
             onClick={() => setOpen(true)}
@@ -70,21 +71,20 @@ export default function Search() {
       </SidebarGroup>
       <SidebarMenu className="hidden group-data-[collapsible=icon]:flex">
         <SidebarMenuItem>
-          <SidebarMenuButton tooltip="搜索" onClick={() => setOpen(true)}>
+          <SidebarMenuButton tooltip={t("search")} onClick={() => setOpen(true)}>
             <SearchIcon />
-            <span>搜索</span>
+            <span>{t("search")}</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
-      <CommandDialog open={open} onOpenChange={setOpen}>
-        <VisuallyHidden>
-          <DialogHeader>
-            <DialogTitle>搜索</DialogTitle>
-          </DialogHeader>
-        </VisuallyHidden>
-        <CommandInput placeholder="输入页面名称搜索..." />
+      <CommandDialog
+        open={open}
+        onOpenChange={setOpen}
+        title={t("search")}
+        description={t("searchPages")}>
+        <CommandInput placeholder={t("searchPages")} />
         <CommandList>
-          <CommandEmpty>没有找到结果。</CommandEmpty>
+          <CommandEmpty>{t("searchEmpty")}</CommandEmpty>
           {navItems.map((route) => (
             <React.Fragment key={route.title}>
               <CommandGroup heading={route.title}>

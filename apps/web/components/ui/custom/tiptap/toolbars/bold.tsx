@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { BoldIcon } from "lucide-react";
 import React from "react";
 
@@ -15,6 +16,7 @@ import { useToolbar } from "./toolbar-provider";
 const BoldToolbar = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, onClick, children, ...props }, ref) => {
     const { editor } = useToolbar();
+    const t = useTranslations("Editor");
     return (
       <Tooltip>
         <TooltipTrigger asChild>
@@ -38,7 +40,7 @@ const BoldToolbar = React.forwardRef<HTMLButtonElement, ButtonProps>(
           </Button>
         </TooltipTrigger>
         <TooltipContent>
-          <span>Bold</span>
+          <span>{t("bold")}</span>
           <span className="text-gray-11 ml-1 text-xs">(cmd + b)</span>
         </TooltipContent>
       </Tooltip>

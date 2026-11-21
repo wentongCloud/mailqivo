@@ -42,7 +42,8 @@ export type ContentRuleProblem = {
     | "TOO_MANY_ATTACHMENTS"
     | "ATTACHMENTS_TOO_LARGE";
   tags?: string[];
-  assets?: { asset_id: string; problem: string }[];
+  /** filename 为 null 表示资产记录不存在。 */
+  assets?: { asset_id: string; filename: string | null; problem: string }[];
   other_index?: number;
   encoded_bytes?: number;
   limit_bytes?: number;
@@ -99,8 +100,11 @@ export async function normalizeContentRules(
       enabled: rule.enabled
     };
   });
-  const problems = [...structuralProblems(rules, hasAiBlocks), ...(await missingTagProblems(db, rules))];
-  problems.push(...(await unusableAssetProblems(db, config, rules)));
+  const problems = [
+    ...structuralProblems(rules, hasAiBlocks),
+    ...(await missingTagProblems(db, rules)),
+    ...(await checkAssets(db, config, rules, () => true)).problems
+  ];
   if (problems.length) throw ruleValidationError("内容规则校验失败", problems);
   return rules;
 }
@@ -160,14 +164,17 @@ export async function missingTagProblems(db: Db, rules: ContentRule[], only: (ru
 async function checkAssets(db: Db, config: StorageConfig, rules: ContentRule[], only: (rule: ContentRule) => boolean) {
   const ids = dedupe(rules.filter(only).flatMap((rule) => rule.attachment_ids));
   const byId = new Map<string, AssetDto>();
-  const bad = new Map<string, string>();
+  // 设计 §1.2：问题附件须可辨识；文件名由 assertAssetsUsable 随问题返回。
+  const bad = new Map<string, { filename: string | null; problem: string }>();
   if (ids.length) {
     try {
       for (const asset of await assertAssetsUsable(db, config, ids)) byId.set(asset.id, asset);
     } catch (error) {
-      const details = error instanceof AppError && error.code === "VALIDATION" ? (error.details as { assets?: { asset_id: string; problem: string }[] } | undefined) : undefined;
+      const details = error instanceof AppError && error.code === "VALIDATION"
+        ? (error.details as { assets?: { asset_id: string; filename: string | null; problem: string }[] } | undefined)
+        : undefined;
       if (!details?.assets) throw error;
-      for (const item of details.assets) bad.set(item.asset_id, item.problem);
+      for (const item of details.assets) bad.set(item.asset_id, { filename: item.filename, problem: item.problem });
       // 其余资产仍然可用：对它们再取一次元数据（问题资产已排除）。
       const okIds = ids.filter((id) => !bad.has(id));
       if (okIds.length) for (const asset of await assertAssetsUsable(db, config, okIds)) byId.set(asset.id, asset);
@@ -176,14 +183,10 @@ async function checkAssets(db: Db, config: StorageConfig, rules: ContentRule[], 
   const problems: ContentRuleProblem[] = [];
   rules.forEach((rule, index) => {
     if (!only(rule)) return;
-    const unusable = rule.attachment_ids.filter((id) => bad.has(id)).map((id) => ({ asset_id: id, problem: bad.get(id)! }));
+    const unusable = rule.attachment_ids.filter((id) => bad.has(id)).map((id) => ({ asset_id: id, ...bad.get(id)! }));
     if (unusable.length) problems.push({ ...ref(rule, index), field: "attachment_ids", problem: "ASSET_UNUSABLE", assets: unusable });
   });
   return { problems, byId };
-}
-
-async function unusableAssetProblems(db: Db, config: StorageConfig, rules: ContentRule[]) {
-  return (await checkAssets(db, config, rules, () => true)).problems;
 }
 
 // ---------------------------------------------------------------------------

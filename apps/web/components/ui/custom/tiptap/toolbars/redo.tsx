@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { Redo2 } from "lucide-react";
 import React from "react";
 
@@ -11,6 +12,7 @@ import { useToolbar } from "./toolbar-provider";
 const RedoToolbar = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, onClick, children, ...props }, ref) => {
     const { editor } = useToolbar();
+    const t = useTranslations("Editor");
 
     return (
       <Tooltip>
@@ -31,7 +33,7 @@ const RedoToolbar = React.forwardRef<HTMLButtonElement, ButtonProps>(
           </Button>
         </TooltipTrigger>
         <TooltipContent>
-          <span>Redo</span>
+          <span>{t("redo")}</span>
         </TooltipContent>
       </Tooltip>
     );

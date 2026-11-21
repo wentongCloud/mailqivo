@@ -4,7 +4,7 @@ import * as React from "react";
 import { CircleAlert, CircleCheck, CircleDashed, CircleX, Loader2, RefreshCw } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { UPDATE_STAGE_VALUES, type UpdateSummary, type UpdateTaskStatus } from "@mailqivo/shared";
+import { type UpdateStage, type UpdateSummary, type UpdateTaskStatus } from "@mailqivo/shared";
 import { ApiError } from "@/lib/api/client";
 import { isTaskActive, useConfirmUpdate, useUpdateCheck, useUpdateTask } from "@/lib/api/update";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -66,6 +66,12 @@ export function UpdateManager() {
 
   const data = check.data;
   const canUpdate = !!data && !data.up_to_date && !data.blockers.length && !active;
+  const noteLines: string[] = [];
+  if (data) {
+    if (!data.up_to_date && data.migrations.pending.length > 0) noteLines.push(t("hasMigrations"));
+    if (data.migrations.unknown_records > 0) noteLines.push(t("unknownRecords", { count: data.migrations.unknown_records }));
+    if (!data.up_to_date && data.sending_campaigns > 0) noteLines.push(t("sendingHint", { count: data.sending_campaigns }));
+  }
   return (
     <div className="space-y-4">
       <Card>
@@ -98,7 +104,13 @@ export function UpdateManager() {
                   </TableRow>
                 </TableBody>
               </Table>
-              <p className="text-muted-foreground text-sm">{t("source", { dir: data.source.dir ?? "—", commit: data.source.commit?.slice(0, 12) ?? "—" })}</p>
+              <div className="text-muted-foreground space-y-1 text-sm">
+                <p>{t("sourceCommit", { commit: data.source.commit?.slice(0, 12) ?? "—" })}</p>
+                <details>
+                  <summary className="cursor-pointer">{t("sourceDetails")}</summary>
+                  <p className="mt-1 break-all">{t("sourceDir", { dir: data.source.dir ?? "—" })}</p>
+                </details>
+              </div>
               {data.notices.length > 0 && (
                 <Alert>
                   <CircleAlert />
@@ -106,7 +118,7 @@ export function UpdateManager() {
                   <AlertDescription>
                     <ul className="list-disc space-y-1 pl-4">
                       {data.notices.map((notice) => (
-                        <li key={notice.code}>{t(`notice.${notice.code}`)}{notice.items?.length ? `: ${notice.items.slice(0, 8).join(", ")}` : ""}</li>
+                        <li key={notice.code}>{t(`notice.${notice.code}`)}</li>
                       ))}
                     </ul>
                   </AlertDescription>
@@ -119,19 +131,16 @@ export function UpdateManager() {
                   <AlertDescription>
                     <ul className="list-disc space-y-1 pl-4">
                       {data.blockers.map((blocker) => (
-                        <li key={blocker.code}>{t(`blocker.${blocker.code}`)}{blocker.items?.length ? `: ${blocker.items.slice(0, 8).join(", ")}${blocker.items.length > 8 ? " …" : ""}` : ""}</li>
+                        <li key={blocker.code}>{t(`blocker.${blocker.code}`)}</li>
                       ))}
                     </ul>
                   </AlertDescription>
                 </Alert>
               )}
               {data.up_to_date && !data.blockers.length && <p className="text-sm">{t("upToDate")}</p>}
-              {!data.up_to_date && (
+              {noteLines.length > 0 && (
                 <ul className="text-muted-foreground space-y-1 text-sm">
-                  <li>{t("files", { added: data.files.added.length, modified: data.files.modified.length, removed: data.files.removed.length })}</li>
-                  <li>{data.migrations.pending.length ? t("migrations", { list: data.migrations.pending.join(", ") }) : t("noMigrations")}</li>
-                  {data.migrations.unknown_records > 0 && <li>{t("unknownRecords", { count: data.migrations.unknown_records })}</li>}
-                  {data.sending_campaigns > 0 && <li>{t("sendingHint", { count: data.sending_campaigns })}</li>}
+                  {noteLines.map((line, index) => <li key={index}>{line}</li>)}
                 </ul>
               )}
               <Button onClick={() => void requestSummary()} disabled={!canUpdate || confirm.isPending}>
@@ -153,6 +162,7 @@ export function UpdateManager() {
                 <ul className="space-y-1 text-sm">
                   <li>{t("app")}: {challenge.summary.app.installed ?? "—"} → {challenge.summary.app.candidate}</li>
                   <li>{t("plugin")}: {challenge.summary.plugin.installed ?? t("notInstalled")} → {challenge.summary.plugin.candidate}</li>
+                  <li>{t("sourceCommit", { commit: challenge.summary.source_commit?.slice(0, 12) ?? "—" })}</li>
                   <li>{t("files", challenge.summary.files)}</li>
                   <li>{challenge.summary.migrations.length ? t("migrations", { list: challenge.summary.migrations.join(", ") }) : t("noMigrations")}</li>
                   <li>{t("noRollback")}</li>
@@ -176,6 +186,45 @@ export function UpdateManager() {
   );
 }
 
+type StepId = "backup" | "update" | "start" | "migrate" | "done";
+
+/**
+ * 页面五步按实现规格 §10.6 归组，阶段按 updater 的执行顺序归入步骤，进度因此不会回跳。
+ * 安装日志、脚本名和命令输出留在任务文件里，不展示。
+ */
+const CORE_STEPS: { id: StepId; stages: UpdateStage[] }[] = [
+  { id: "backup", stages: ["lock", "verify_candidate", "stop_services", "backup"] },
+  { id: "update", stages: ["apply_files", "install", "build"] },
+  // 规格「页面步骤」表：verify_running 在迁移之后执行，但校验运行中的服务，进度与失败都归「启动服务」。
+  { id: "start", stages: ["start_services", "verify_running"] },
+  { id: "migrate", stages: ["migrate"] },
+  { id: "done", stages: ["plugin", "finish"] }
+];
+
+/** 失败所在步骤与进度共用 CORE_STEPS。finish 在任何失败时都记为 failed，只是汇总，不单独标记。 */
+function failureStep(name: UpdateStage): StepId | null {
+  if (name === "finish") return null;
+  return CORE_STEPS.find((step) => step.stages.includes(name))?.id ?? null;
+}
+
+type RecordedStage = UpdateTaskStatus["stages"][number];
+
+function stepStatus(
+  step: (typeof CORE_STEPS)[number],
+  recorded: ReadonlyMap<UpdateStage, RecordedStage>,
+  taskStage: UpdateStage | null
+): { current: boolean; result?: RecordedStage["result"] } {
+  const current = step.stages.some((name) => taskStage === name);
+  const failed = [...recorded.values()].some((stage) => stage.result === "failed" && failureStep(stage.name) === step.id);
+  if (failed) return { current, result: "failed" };
+  const finished = step.stages.flatMap((name) => {
+    const stage = recorded.get(name);
+    return stage && stage.result !== "failed" ? [stage] : [];
+  });
+  if (finished.length < step.stages.length) return { current };
+  return { current, result: finished.some((stage) => stage.result === "ok") ? "ok" : "skipped" };
+}
+
 function StageIcon({ result, current }: { result?: "ok" | "skipped" | "failed"; current: boolean }) {
   if (current) return <Loader2 className="size-4 animate-spin" />;
   if (result === "ok") return <CircleCheck className="size-4 text-green-600" />;
@@ -188,7 +237,10 @@ function TaskCard({ task, reconnecting }: { task?: UpdateTaskStatus; reconnectin
   if (!task) return <Card><CardContent className="text-muted-foreground flex items-center gap-2 py-6 text-sm"><Loader2 className="size-4 animate-spin" />{t("reconnecting")}</CardContent></Card>;
 
   const results = new Map(task.stages.map((stage) => [stage.name, stage]));
-  const pluginUpdated = task.plugin.now != null && task.plugin.now === task.plugin.target && task.plugin.before !== task.plugin.now;
+  const warnings = task.warnings ?? [];
+  // warnings 只来自插件阶段；有告警时插件可能不可用，不提示重启 Codex。
+  const pluginUpdated = !warnings.length && task.plugin.now != null && task.plugin.now === task.plugin.target && task.plugin.before !== task.plugin.now;
+  const active = isTaskActive(task);
 
   return (
     <Card>
@@ -198,29 +250,34 @@ function TaskCard({ task, reconnecting }: { task?: UpdateTaskStatus; reconnectin
       </CardHeader>
       <CardContent className="space-y-4">
         <ol className="space-y-1.5">
-          {UPDATE_STAGE_VALUES.map((name) => {
-            const stage = results.get(name);
+          {CORE_STEPS.map((step) => {
+            const { current, result } = stepStatus(step, results, task.stage);
             return (
-              <li key={name} className="flex items-start gap-2 text-sm">
-                <StageIcon result={stage?.result} current={task.stage === name} />
-                <span className={stage?.result === "skipped" ? "text-muted-foreground line-through" : undefined}>{t(`stage.${name}`)}</span>
-                {stage?.detail && <span className="text-muted-foreground">— {stage.detail}</span>}
+              <li key={step.id} className="flex items-start gap-2 text-sm">
+                <StageIcon result={result} current={current} />
+                <span className={result === "skipped" ? "text-muted-foreground" : undefined}>{t(`step.${step.id}`)}</span>
               </li>
             );
           })}
         </ol>
-        {!isTaskActive(task) && (
+        {!active && (
           <div className="space-y-2 text-sm">
             <p>{t("resultApp", { before: task.app.before ?? "—", target: task.app.target ?? "—", now: task.app.now ?? "—" })}</p>
             <p>{t("resultPlugin", { before: task.plugin.before ?? "—", target: task.plugin.target ?? "—", now: task.plugin.now ?? "—" })}</p>
             {task.downtime_sec != null && <p>{t("downtimeActual", { seconds: task.downtime_sec })}</p>}
-            {task.error && <p className="text-destructive">{task.error}</p>}
-            {(task.warnings ?? []).length > 0 && (
+            {task.state === "failed" && (
+              <Alert variant="destructive">
+                <CircleX />
+                <AlertTitle>{t("stepFailed")}</AlertTitle>
+                {task.error && <AlertDescription className="break-all whitespace-pre-wrap">{task.error}</AlertDescription>}
+              </Alert>
+            )}
+            {warnings.length > 0 && (
               <Alert>
                 <CircleAlert />
                 <AlertTitle>{t("warnings")}</AlertTitle>
                 <AlertDescription>
-                  <ul className="list-disc space-y-1 pl-4">{(task.warnings ?? []).map((warning) => <li key={warning}>{warning}</li>)}</ul>
+                  <ul className="list-disc space-y-1 pl-4 break-all">{warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>
                 </AlertDescription>
               </Alert>
             )}

@@ -51,14 +51,21 @@ export function openWorkspaceWeb(platform = process.platform, run = execFileAsyn
   return run(platform === "darwin" ? "/usr/bin/open" : "xdg-open", [WORKSPACE_WEB_URL], { timeout: 5_000 });
 }
 
-export function createMcpServer(ctx: McpContext, log: { error: (obj: unknown, msg: string) => void }): Server {
-  const server = new Server({ name: "mailqivo", version: APP_VERSION }, { capabilities: { tools: {}, resources: {} } });
-  const tools = new Map(MCP_TOOLS.map((tool) => [tool.name as string, tool]));
-  const listed: Tool[] = [
+let listedCache: Tool[] | null = null;
+/** 工具表是静态的：JSON Schema 只在首次使用时转换一次，不随每个无状态请求重算。 */
+function listedTools(): Tool[] {
+  listedCache ??= [
     ...MCP_TOOLS.map((tool) => ({ name: tool.name, description: tool.description, inputSchema: inputSchemaOf(tool) as { type: "object" } })),
     WORKSPACE_TOOL,
     WORKSPACE_OPEN_WEB_TOOL
   ];
+  return listedCache;
+}
+
+export function createMcpServer(ctx: McpContext, log: { error: (obj: unknown, msg: string) => void }): Server {
+  const server = new Server({ name: "mailqivo", version: APP_VERSION }, { capabilities: { tools: {}, resources: {} } });
+  const tools = new Map(MCP_TOOLS.map((tool) => [tool.name as string, tool]));
+  const listed = listedTools();
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: listed }));
   server.setRequestHandler(ListResourcesRequestSchema, async () => ({

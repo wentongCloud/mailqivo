@@ -1,6 +1,6 @@
 import nodemailer from "nodemailer";
 import { ImapFlow } from "imapflow";
-import type { MailChannel, OutgoingMail, SendReceipt, SmtpChannelOptions, VerifyResult } from "./channel.ts";
+import type { MailChannel, OutgoingMail, SendReceipt, SmtpChannelOptions, SmtpVerifyResult, VerifyResult } from "./channel.ts";
 import { buildMimeOptions } from "./mime.ts";
 
 type SmtpError = Error & { responseCode?: number; response?: string; code?: string };
@@ -98,7 +98,8 @@ export class SmtpChannel implements MailChannel {
     };
   }
 
-  private async verifySmtp(): Promise<{ ok: boolean; error?: string }> {
+  /** 只探测 SMTP 连接与认证。发送确认提交使用；设置页的通道测试由 verify() 组合 SMTP 与 IMAP。 */
+  async verifySmtp(): Promise<SmtpVerifyResult> {
     const transporter = this.transport();
     try {
       await transporter.verify();

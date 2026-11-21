@@ -1,4 +1,4 @@
-import { CampaignEditor } from "@/components/edm/campaigns/campaign-editor";
+import { NewCampaign } from "@/components/edm/campaigns/campaign-prerequisites";
 import { generateMeta } from "@/lib/utils";
 import { getTranslations } from "next-intl/server";
 
@@ -8,5 +8,5 @@ export async function generateMetadata() {
 }
 
 export default function Page() {
-  return <CampaignEditor />;
+  return <NewCampaign />;
 }

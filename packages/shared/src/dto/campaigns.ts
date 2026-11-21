@@ -154,6 +154,10 @@ export type CampaignTestSendResult = {
   items: { id: string; email: string; ok: boolean; code?: number; response: string }[];
 };
 
+/** 规格 §6.2 第 1 条：创建活动前置条件。只返回缺项，不返回任何配置值或密钥。 */
+export type CampaignPrerequisiteItem = "channel" | "unsubscribe";
+export type CampaignPrerequisites = { ready: boolean; missing: CampaignPrerequisiteItem[] };
+
 export { CAMPAIGN_STATUS_LABEL, campaignStatusLabel } from "../i18n/labels.ts";
 
 /** §8.3 `POST /api/campaigns/:id/preview` 请求体。 */

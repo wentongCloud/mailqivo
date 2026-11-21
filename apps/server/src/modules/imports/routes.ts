@@ -59,6 +59,7 @@ export const importRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post<{ Params: { id: string } }>("/:id/commit", async (request) => {
-    return commitImport(app.db, request.params.id, parseOrThrow(ImportCommitBody, request.body));
+    const body = parseOrThrow(ImportCommitBody, request.body);
+    return commitImport(app.db, request.params.id, { dedup_strategy: body.dedup_strategy, confirm_token: body.confirm_token, tags: { ids: body.tag_ids } });
   });
 };

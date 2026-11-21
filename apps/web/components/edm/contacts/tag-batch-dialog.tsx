@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { ApiError } from "@/lib/api/client";
@@ -38,6 +39,8 @@ export function TagBatchDialog({ open, onOpenChange, contactIds, onDone }: Props
 }
 
 function Body({ contactIds, onClose, onDone }: { contactIds: string[]; onClose: () => void; onDone?: () => void }) {
+  const t = useTranslations("Tags");
+  const tc = useTranslations("Common");
   const { data: tags = [] } = useTags();
   const apply = useApplyContactTags();
   const [mode, setMode] = React.useState<"add" | "remove">("add");
@@ -62,19 +65,19 @@ function Body({ contactIds, onClose, onDone }: { contactIds: string[]; onClose: 
         contact_ids: contactIds,
         ...(mode === "add" ? { add: names } : { remove: names })
       });
-      toast.success(mode === "add" ? `已为 ${res.matched} 个联系人添加标签` : `已为 ${res.matched} 个联系人移除标签`);
+      toast.success(mode === "add" ? t("batchAdd", { count: res.matched }) : t("batchRemove", { count: res.matched }));
       onDone?.();
       onClose();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "操作失败，请稍后重试");
+      toast.error(err instanceof ApiError ? err.message : tc("requestFailed"));
     }
   }
 
   return (
     <>
       <DialogHeader>
-        <DialogTitle>批量设置标签</DialogTitle>
-        <DialogDescription>对选中的 {contactIds.length} 个联系人添加或移除标签。</DialogDescription>
+        <DialogTitle>{t("batchTitle")}</DialogTitle>
+        <DialogDescription>{t("batchDesc", { count: contactIds.length })}</DialogDescription>
       </DialogHeader>
 
       <Tabs
@@ -84,8 +87,8 @@ function Body({ contactIds, onClose, onDone }: { contactIds: string[]; onClose: 
           setPicked([]);
         }}>
         <TabsList>
-          <TabsTrigger value="add">添加标签</TabsTrigger>
-          <TabsTrigger value="remove">移除标签</TabsTrigger>
+          <TabsTrigger value="add">{t("addTab")}</TabsTrigger>
+          <TabsTrigger value="remove">{t("removeTab")}</TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -104,7 +107,7 @@ function Body({ contactIds, onClose, onDone }: { contactIds: string[]; onClose: 
           <Input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder="或输入新标签，逗号分隔"
+            placeholder={t("orType")}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
@@ -113,23 +116,23 @@ function Body({ contactIds, onClose, onDone }: { contactIds: string[]; onClose: 
             }}
           />
           <Button type="button" variant="outline" onClick={addDraft}>
-            加入
+            {t("addDraft")}
           </Button>
         </div>
       )}
 
       {picked.length > 0 && (
         <p className="text-muted-foreground text-sm">
-          将{mode === "add" ? "添加" : "移除"}：{picked.join("、")}
+          {mode === "add" ? t("willAdd", { names: picked.join(", ") }) : t("willRemove", { names: picked.join(", ") })}
         </p>
       )}
 
       <DialogFooter>
         <Button variant="outline" onClick={onClose}>
-          取消
+          {tc("cancel")}
         </Button>
         <Button onClick={submit} disabled={apply.isPending || (picked.length === 0 && !draft.trim())}>
-          {apply.isPending ? "处理中…" : "确定"}
+          {apply.isPending ? tc("processing") : tc("ok")}
         </Button>
       </DialogFooter>
     </>

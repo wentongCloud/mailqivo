@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { SettingsBody, SettingsDto, SignatureBody, SignatureDto, TemplateBody, TemplateDto } from "@mailqivo/shared";
+import type { SettingsBody, SettingsDto, SignatureBody, SignatureDto, TemplateBody, TemplateDiagnosis, TemplateDto } from "@mailqivo/shared";
 import { apiFetch } from "@/lib/api/client";
 
 function contentHooks<Resource, Body>(key: string, path: string) {
@@ -30,6 +30,11 @@ function contentHooks<Resource, Body>(key: string, path: string) {
 }
 
 export const templateApi = contentHooks<TemplateDto, TemplateBody>("templates", "/api/templates");
+
+/** 规格 §7.2「模板导入诊断」：活动第三步套用模板时检查模板正文。 */
+export function diagnoseTemplate(id: string, html: string, aiBlockKeys: string[]) {
+  return apiFetch<TemplateDiagnosis>(`/api/templates/${id}/diagnose`, { method: "POST", body: JSON.stringify({ html, ai_block_keys: aiBlockKeys }) });
+}
 export const signatureApi = contentHooks<SignatureDto, SignatureBody>("signatures", "/api/signatures");
 
 export function useSettings() {

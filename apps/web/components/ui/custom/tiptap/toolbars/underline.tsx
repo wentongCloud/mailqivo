@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { UnderlineIcon } from "lucide-react";
 import React from "react";
 
@@ -11,6 +12,7 @@ import { useToolbar } from "./toolbar-provider";
 const UnderlineToolbar = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, onClick, children, ...props }, ref) => {
     const { editor } = useToolbar();
+    const t = useTranslations("Editor");
     return (
       <Tooltip>
         <TooltipTrigger asChild>
@@ -34,7 +36,7 @@ const UnderlineToolbar = React.forwardRef<HTMLButtonElement, ButtonProps>(
           </Button>
         </TooltipTrigger>
         <TooltipContent>
-          <span>Underline</span>
+          <span>{t("underline")}</span>
           <span className="text-gray-11 ml-1 text-xs">(cmd + u)</span>
         </TooltipContent>
       </Tooltip>

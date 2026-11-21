@@ -36,7 +36,8 @@ export const assetRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/", async (request) => {
     const query = parseOrThrow(AssetListQuery, request.query ? { enabled: (request.query as Record<string, unknown>).enabled } : {});
-    return { items: await listAssets(app.db, { enabled: query.enabled === undefined ? undefined : query.enabled === "true" }) };
+    const { items } = await listAssets(app.db, { enabled: query.enabled === undefined ? undefined : query.enabled === "true" });
+    return { items };
   });
   app.get<{ Params: { id: string } }>("/:id", async (request) => getAsset(app.db, request.params.id));
   app.post<{ Params: { id: string } }>("/:id/disable", async (request) => disableAsset(app.db, request.params.id));

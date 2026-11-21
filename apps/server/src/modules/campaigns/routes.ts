@@ -4,7 +4,7 @@ import { CampaignBody, CampaignConfirmBody, CampaignPreviewBody, CampaignMessage
 import { parseOrThrow } from "../../lib/errors.ts";
 import { improveDraft } from "./improve.ts";
 import { parsePagination } from "../../lib/pagination.ts";
-import { cancelCampaign, createCampaign, deleteCampaign, getCampaign, listCampaigns, pauseCampaign, requeueUnknownMessages, resumeCampaign, sendCampaign, updateCampaign } from "./service.ts";
+import { cancelCampaign, createCampaign, deleteCampaign, getCampaign, getCampaignPrerequisites, listCampaigns, pauseCampaign, requeueUnknownMessages, resumeCampaign, sendCampaign, updateCampaign } from "./service.ts";
 import { getCampaignOpensByHour, getCampaignStats, listCampaignMessages } from "./stats.ts";
 import { previewCampaign } from "./preview.ts";
 import { testSendCampaign } from "./test-send.ts";
@@ -17,6 +17,7 @@ export const campaignRoutes: FastifyPluginAsync = async (app) => {
     reply.status(201);
     return createCampaign(app.db, parseOrThrow(CampaignBody, request.body), app.config);
   });
+  app.get("/prerequisites", async () => getCampaignPrerequisites(app.db, app.config));
   app.get<IdParams>("/:id", async (request) => getCampaign(app.db, request.params.id));
   app.get<IdParams>("/:id/stats", async (request) => getCampaignStats(app.db, request.params.id));
   app.get<IdParams>("/:id/stats/opens-by-hour", async (request) => getCampaignOpensByHour(app.db, request.params.id, (request.query as { include_suspect?: string }).include_suspect === "1"));

@@ -92,6 +92,13 @@
       "when": 1795149187088,
       "tag": "0012_campaign_physical_delete",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1795221429268,
+      "tag": "0013_campaign_send_targets",
+      "breakpoints": true
     }
   ]
 }

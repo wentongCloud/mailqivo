@@ -1,6 +1,7 @@
 "use client";
 
 // @ts-nocheck
+import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import {
 	Popover,
@@ -87,6 +88,7 @@ const ColorHighlightButton = ({
 );
 
 export const ColorHighlightToolbar = () => {
+	const t = useTranslations("Editor");
 	const { editor } = useToolbar();
 	const isMobile = useMediaQuery("(max-width: 640px)");
 
@@ -116,7 +118,7 @@ export const ColorHighlightToolbar = () => {
 	if (isMobile) {
 		return (
 			<div className="flex gap-1">
-				<MobileToolbarGroup label="Color">
+				<MobileToolbarGroup label={t("color")}>
 					{TEXT_COLORS.map(({ name, color }) => (
 						<MobileToolbarItem
 							key={name}
@@ -133,7 +135,7 @@ export const ColorHighlightToolbar = () => {
 					))}
 				</MobileToolbarGroup>
 
-				<MobileToolbarGroup label="Highlight">
+				<MobileToolbarGroup label={t("background")}>
 					{HIGHLIGHT_COLORS.map(({ name, color }) => (
 						<MobileToolbarItem
 							key={name}
@@ -176,12 +178,12 @@ export const ColorHighlightToolbar = () => {
 							</Button>
 						</PopoverTrigger>
 					</TooltipTrigger>
-					<TooltipContent>Text Color & Highlight</TooltipContent>
+					<TooltipContent>{t("colorHighlight")}</TooltipContent>
 				</Tooltip>
 
 				<PopoverContent align="start" className="w-56 p-1 dark:bg-gray-2">
 					<ScrollArea className="max-h-80 overflow-y-auto pr-2">
-						<div className="mb-2.5 mt-2 px-2 text-xs text-gray-11">Color</div>
+						<div className="mb-2.5 mt-2 px-2 text-xs text-gray-11">{t("color")}</div>
 						{TEXT_COLORS.map(({ name, color }) => (
 							<ColorHighlightButton
 								key={name}
@@ -195,7 +197,7 @@ export const ColorHighlightToolbar = () => {
 						<Separator className="my-3" />
 
 						<div className="mb-2.5 w-full px-2 pr-3 text-xs text-gray-11">
-							Background
+							{t("background")}
 						</div>
 						{HIGHLIGHT_COLORS.map(({ name, color }) => (
 							<ColorHighlightButton

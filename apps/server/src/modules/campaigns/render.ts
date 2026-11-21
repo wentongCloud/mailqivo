@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import type { ContactDto, CampaignDto } from "@mailqivo/shared";
+import type { ContactDto } from "@mailqivo/shared";
 import type { Db } from "../../db/client.ts";
 import { campaigns, signatures } from "../../db/schema.ts";
 import { Errors } from "../../lib/errors.ts";
@@ -65,14 +65,22 @@ export async function renderCampaign(
   return { ...rendered, unsubscribeUrl: url };
 }
 
-export function contactForRender(contact: ContactDto): RenderContact {
+/** 联系人行或 ContactDto → 渲染所需字段（custom_fields 按 `{ key: string }` 存储）。 */
+export function contactForRender(contact: Pick<ContactDto, "email" | "name" | "company" | "title"> & { custom_fields: unknown }): RenderContact {
   return {
     email: contact.email,
     name: contact.name,
     company: contact.company,
     title: contact.title,
-    custom_fields: contact.custom_fields
+    custom_fields: contact.custom_fields as Record<string, string>
   };
 }
 
-export type { CampaignDto };
+/** 占位渲染（预览、preparing 链接快照）使用的 tracking_id（§8.3「追踪 URL 用占位值」）。 */
+export const PLACEHOLDER_TRACKING_ID = "00000000-0000-4000-8000-000000000000";
+
+/** 占位渲染时每个 AI 区块的替代文本 `[AI:key]`。 */
+export function placeholderAiContent(aiBlocks: unknown): Record<string, string> {
+  return Object.fromEntries((aiBlocks as { key: string }[]).map((block) => [block.key, `[AI:${block.key}]`]));
+}
+

@@ -230,7 +230,7 @@ function ChannelForm({ item, onClose }: { item: ChannelDto | null; onClose: () =
   const tc = useTranslations("Common");
   const create = useCreateChannel();
   const update = useUpdateChannel();
-  const form = useForm<FormValues>({ resolver: zodResolver(channelFormSchema(item)), defaultValues: defaults(item) });
+  const form = useForm<FormValues>({ resolver: zodResolver(channelFormSchema(item, t("emailInvalid"))), defaultValues: defaults(item) });
 
   async function submit(values: FormValues) {
     try {

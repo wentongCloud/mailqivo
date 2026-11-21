@@ -7,28 +7,30 @@ import {
   type CampaignBody,
   type CampaignDto,
   type CampaignListDto,
+  type CampaignPrerequisites,
+  type CampaignPrerequisiteItem,
   type CampaignSendSummary,
   type CampaignStatus,
   type ConfirmChallenge,
-  type ContactStatus,
   type RequeueUnknownBody,
   type RequeueUnknownResult,
   type RequeueUnknownSummary
 } from "@mailqivo/shared";
 import type { Config } from "../../config.ts";
 import type { Db } from "../../db/client.ts";
-import { campaignLinks, campaigns, channelDailyUsage, channels, confirmTokens, contacts, messages } from "../../db/schema.ts";
+import { campaignLinks, campaignSendTargets, campaigns, channelDailyUsage, channels, confirmTokens, contacts, messages } from "../../db/schema.ts";
 import { consumeConfirmToken, issueConfirmToken } from "../../lib/confirm-token.ts";
 import { AppError, Errors } from "../../lib/errors.ts";
-import { assertUnsubscribeConfigured } from "../../mail/unsubscribe.ts";
+import { assertUnsubscribeConfigured, type UnsubscribeConfig } from "../../mail/unsubscribe.ts";
 import type { PageParams } from "../../lib/pagination.ts";
 import { toPage } from "../../lib/pagination.ts";
 import { sanitizeEmailHtml } from "../../render/sanitize.ts";
-import { BUILTIN_TEMPLATE_KEYS, templateVariables } from "../../render/template.ts";
-import type { ChannelRuntimeConfig } from "../channels/service.ts";
+import { templateVariables } from "../../render/template.ts";
+import { getChannelMailer, type ChannelRuntimeConfig } from "../channels/service.ts";
 import { buildContactWhere } from "../contacts/where.ts";
-import { getPrepareWarnRecipientThreshold, getSettings } from "../settings/service.ts";
-import { renderCampaign, resolveSignature, type CampaignRow } from "./render.ts";
+import { getPrepareWarnRecipientThreshold } from "../settings/service.ts";
+import { resolveCampaignChannel } from "./channel.ts";
+import { PLACEHOLDER_TRACKING_ID, placeholderAiContent, renderCampaign, type CampaignRow } from "./render.ts";
 import {
   assertRuleAttachments,
   assertRuleTagsExist,
@@ -48,7 +50,7 @@ import { dayInTimezone } from "../../lib/timezone.ts";
 
 export type CampaignRuntimeConfig = ChannelRuntimeConfig & Pick<Config, "APP_TIMEZONE" | "LLM_API_KEY" | "ASSET_DIR">;
 type ContactRow = typeof contacts.$inferSelect;
-type ChannelRow = typeof channels.$inferSelect;
+type ChannelRow = Awaited<ReturnType<typeof resolveCampaignChannel>>;
 
 const iso = (date: Date | null) => date?.toISOString() ?? null;
 
@@ -155,15 +157,47 @@ async function clean(db: Db, config: Pick<Config, "ASSET_DIR">, body: CampaignBo
   return { ...body, html: sanitizeEmailHtml(body.html), content_rules, send_at };
 }
 
-export async function createCampaign(db: Db, body: CampaignBody, config: Pick<Config, "ASSET_DIR">) {
+/**
+ * 规格 §6.2 第 1–2 条：创建活动前置条件。至少有一个发送通道，且退订配置完整。
+ * 只返回缺项，不返回配置值。Web 新建页读取；REST 与 MCP 创建草稿前经 assertCampaignPrerequisites 执行同一检查。
+ */
+export async function getCampaignPrerequisites(db: Db, config: UnsubscribeConfig): Promise<CampaignPrerequisites> {
+  const missing: CampaignPrerequisiteItem[] = [];
+  const [channel] = await db.select({ id: channels.id }).from(channels).limit(1);
+  if (!channel) missing.push("channel");
+  try {
+    assertUnsubscribeConfigured(config);
+  } catch {
+    missing.push("unsubscribe");
+  }
+  return { ready: missing.length === 0, missing };
+}
+
+async function assertCampaignPrerequisites(db: Db, config: UnsubscribeConfig) {
+  const result = await getCampaignPrerequisites(db, config);
+  if (!result.ready) throw Errors.validation("创建活动前须先配置发送通道与退订地址", { missing: result.missing });
+}
+
+type CampaignWriteConfig = Pick<Config, "ASSET_DIR"> & UnsubscribeConfig;
+
+export async function createCampaign(db: Db, body: CampaignBody, config: CampaignWriteConfig) {
+  await assertCampaignPrerequisites(db, config);
   const [row] = await db.insert(campaigns).values(await clean(db, config, body)).returning({ id: campaigns.id });
   return getCampaign(db, row!.id);
 }
 
+/** 锁活动行后按 status='draft' 条件更新；与发送确认互斥（规格 §5.4 第 2 条）。 */
 export async function updateCampaign(db: Db, id: string, body: CampaignBody, config: Pick<Config, "ASSET_DIR">) {
-  const row = await getCampaignRow(db, id);
-  if (row.status !== "draft") throw Errors.invalidState("只有草稿状态的活动可以修改");
-  await db.update(campaigns).set({ ...(await clean(db, config, body, row.content_rules)), updated_at: new Date() }).where(eq(campaigns.id, id));
+  await db.transaction(async (tx) => {
+    const trx = tx as unknown as Db;
+    const [row] = await trx.select().from(campaigns).where(eq(campaigns.id, id)).for("update");
+    if (!row) throw Errors.notFound("活动不存在");
+    if (row.status !== "draft") throw Errors.invalidState("只有草稿状态的活动可以修改");
+    const values = await clean(trx, config, body, row.content_rules);
+    const updated = await trx.update(campaigns).set({ ...values, updated_at: new Date() })
+      .where(and(eq(campaigns.id, id), eq(campaigns.status, "draft"))).returning({ id: campaigns.id });
+    if (!updated.length) throw Errors.invalidState("只有草稿状态的活动可以修改");
+  });
   return getCampaign(db, id);
 }
 
@@ -180,39 +214,18 @@ export async function deleteCampaign(db: Db, id: string) {
   });
 }
 
-async function resolveChannel(db: Db, row: CampaignRow): Promise<ChannelRow> {
-  const where = row.channel_id ? eq(channels.id, row.channel_id) : eq(channels.is_default, true);
-  const [channel] = await db.select().from(channels).where(where);
-  if (!channel) throw Errors.validation(row.channel_id ? "所选发送通道不存在" : "没有可用的默认发送通道");
-  return channel;
-}
-
-async function validateVariables(db: Db, row: CampaignRow): Promise<void> {
-  const [settings, signature, customKeys] = await Promise.all([
-    getSettings(db),
-    resolveSignature(db, row),
-    db.execute<{ key: string }>(sql`SELECT DISTINCT jsonb_object_keys(custom_fields) AS key FROM contacts`)
-  ]);
-  const source = `${row.subject}${row.html}${signature?.html ?? ""}${settings.footer_html}`;
-  const vars = templateVariables(source);
-  const blocks = new Set((row.ai_blocks as { key: string }[]).map((block) => block.key));
-  const custom = new Set(customKeys.rows.map((item) => item.key));
-  const unknown = vars
-    .filter((item) => !item.hasDefault)
-    .filter((item) => {
-      if (BUILTIN_TEMPLATE_KEYS.has(item.key) || custom.has(item.key)) return false;
-      if (item.key.startsWith("ai.")) return !blocks.has(item.key.slice(3));
-      if (item.key.startsWith("ai_")) return !blocks.has(item.key.slice(3));
-      return true;
-    })
-    .map((item) => item.key);
-  if (unknown.length) throw Errors.validation("模板包含无法解析的变量", { variables: [...new Set(unknown)] });
+/** 按通道日额度估算发完天数。daily_limit=0 表示不限日额度，按 1 天计（仍受每分钟速率约束）。 */
+function estimateSendDays(recipients: number, dailyLimit: number, remainingToday: number): number {
+  if (recipients === 0) return 0;
+  if (dailyLimit <= 0 || recipients <= remainingToday) return 1;
+  return 1 + Math.ceil((recipients - remainingToday) / dailyLimit);
 }
 
 type SendContext = {
   row: CampaignRow;
   channel: ChannelRow;
   recipientsRows: ContactRow[];
+  recipientIdsHash: string;
   summary: CampaignSendSummary;
 };
 
@@ -220,13 +233,11 @@ async function buildSendContext(db: Db, id: string, runtime: CampaignRuntimeConf
   const row = await getCampaignRow(db, id);
   if (row.status !== "draft") throw Errors.invalidState("只有草稿状态的活动可以发送");
   assertSingleAudience(ContactFilter.parse(row.contact_filter));
-  const channel = await resolveChannel(db, row);
+  const channel = await resolveCampaignChannel(db, row);
   const blocks = row.ai_blocks as { key: string }[];
   if (blocks.length && !runtime.LLM_API_KEY) throw new AppError("AI_DISABLED", "活动包含 AI 区块，但尚未配置 LLM_API_KEY");
   assertUnsubscribeConfigured(runtime);
-  await validateVariables(db, row);
-  const filter = { ...ContactFilter.parse(row.contact_filter), statuses: [...CONTACT_STATUS_VALUES] };
-  const recipientsRows = await db.select().from(contacts).where(buildContactWhere(filter));
+  const recipientsRows = await matchedContacts(db, row);
   const activeRows = recipientsRows.filter((contact) => contact.status === "active");
   const recipients = activeRows.length;
   const skipped_by_status: Record<string, number> = {};
@@ -238,13 +249,7 @@ async function buildSendContext(db: Db, id: string, runtime: CampaignRuntimeConf
   const used = usage?.count ?? 0;
   // daily_limit=0：无日额度；remaining=-1 表示不限，预计 1 天发完（仍受每分钟速率约束）。
   const remaining = channel.daily_limit <= 0 ? -1 : Math.max(0, channel.daily_limit - used);
-  const estimated_days = recipients === 0
-    ? 0
-    : channel.daily_limit <= 0
-      ? 1
-      : recipients <= remaining
-        ? 1
-        : 1 + Math.ceil((recipients - remaining) / channel.daily_limit);
+  const estimated_days = estimateSendDays(recipients, channel.daily_limit, remaining);
   // §6.2 第 6 步（V1.1）：标签仍存在、启用规则的附件可用；breakdown 按当前筛选快照计算，参与 summary_hash。
   const rules = parseStoredRules(row.content_rules);
   let breakdown: ReturnType<typeof computeRulesBreakdown> = { content_rules_breakdown: [], unmatched_recipients: recipients };
@@ -252,36 +257,62 @@ async function buildSendContext(db: Db, id: string, runtime: CampaignRuntimeConf
   if (rules.length) {
     await assertRuleTagsExist(db, rules);
     const attachmentsByRule = await assertRuleAttachments(db, runtime, rules);
-    tagsByContact = await contactTagNames(db, and(buildContactWhere(filter), eq(contacts.status, "active")));
+    tagsByContact = await contactTagNames(db, and(buildContactWhere(ContactFilter.parse(row.contact_filter)), eq(contacts.status, "active")));
     const industryByContact = new Map(activeRows.map((contact) => [contact.id, contactIndustry(contact.custom_fields)]));
     breakdown = computeRulesBreakdown(rules, activeRows, tagsByContact, attachmentsByRule, industryByContact);
   }
-  const ruleSummary = breakdown;
   // §6.2 第 5 步 + 第 6 步（V1.1）：按联系人当前命中规则计算 hash 的样例门禁（samples.ts）。
-  const ruleRecipients = new Map(ruleSummary.content_rules_breakdown.map((item) => [item.rule_id, item.recipients]));
+  const ruleRecipients = new Map(breakdown.content_rules_breakdown.map((item) => [item.rule_id, item.recipients]));
   const samples = await computeSampleStatus(db, row, activeRows.map((contact) => contact.id), { tagsByContact, ruleRecipients });
-  const confirmed = samples.sample_confirmed;
   // §5.5：阈值每次计算摘要时读取；变化会改变摘要哈希，已发令牌按 §5.4 返回 CONFIRM_INVALID。
   const threshold = await getPrepareWarnRecipientThreshold(db);
   return {
     row,
     channel,
     recipientsRows,
+    recipientIdsHash: recipientIdsHash(recipientsRows),
     summary: {
       recipients,
       skipped_by_status,
       channel_daily_remaining: remaining,
       estimated_days,
       ai_blocks: blocks.map((block) => block.key),
-      sample_confirmed: confirmed,
+      sample_confirmed: samples.sample_confirmed,
       large_audience_warning: threshold > 0 && recipients >= threshold,
       // §6.2 第 6 步 / §11.4：每项 has_sample（无 ai_blocks 时恒 true），随 summary 一起进入 summary_hash。
-      content_rules_breakdown: ruleSummary.content_rules_breakdown.map((item) => ({ ...item, has_sample: samples.rules_with_sample.has(item.rule_id) })),
-      unmatched_recipients: ruleSummary.unmatched_recipients
+      content_rules_breakdown: breakdown.content_rules_breakdown.map((item) => ({ ...item, has_sample: samples.rules_with_sample.has(item.rule_id) })),
+      unmatched_recipients: breakdown.unmatched_recipients
     }
   };
 }
 
+/** 活动筛选命中的全部联系人（含非 active，用于跳过统计与准备时的 skipped）。 */
+async function matchedContacts(db: Db, row: Pick<CampaignRow, "contact_filter">): Promise<ContactRow[]> {
+  const filter = { ...ContactFilter.parse(row.contact_filter), statuses: [...CONTACT_STATUS_VALUES] };
+  return db.select().from(contacts).where(buildContactWhere(filter));
+}
+
+/** 规格 §5.4 第 2 条：确认绑定的名单成员。按 contact_id 排序，`contact_id:status` 以 "," 连接后取 sha256。 */
+function recipientIdsHash(rows: Pick<ContactRow, "id" | "status">[]): string {
+  const items = rows.map((row) => `${row.id}:${row.status}`).sort();
+  return createHash("sha256").update(items.join(",")).digest("hex");
+}
+
+/** 参与 summary_hash 的摘要：去掉随通道用量自然变化的两项，界面仍展示完整摘要。 */
+function confirmedSummary(summary: CampaignSendSummary) {
+  const { channel_daily_remaining: _remaining, estimated_days: _days, ...stable } = summary;
+  return stable;
+}
+
+const confirmInvalid = (message: string) => new AppError("CONFIRM_INVALID", message, { reason: "TARGET_MISMATCH" });
+
+/**
+ * 规格 §5.4 第 2 条、§6.2 第 7 条：
+ * 1. 第一步只计算摘要并发放令牌，令牌绑定草稿版本、发送时间、通道与名单哈希。
+ * 2. 第二步在短事务内锁活动行、复核草稿版本并占用令牌；不一致时不重签。
+ * 3. 事务外验证所选通道的 SMTP 连接与认证；失败时活动保持草稿，令牌已用。
+ * 4. 新事务内复核版本与名单，写入 campaign_send_targets，再转入 preparing 或 scheduled。
+ */
 export async function sendCampaign(
   db: Db,
   id: string,
@@ -289,43 +320,113 @@ export async function sendCampaign(
   runtime: CampaignRuntimeConfig
 ): Promise<CampaignDto | ConfirmChallenge<CampaignSendSummary>> {
   const context = await buildSendContext(db, id, runtime);
-  // §6.2 第 5 步 / §11.4：第一步照常返回摘要（UI 据 sample_confirmed=false 禁用确认并标出缺样例的规则）；
-  // 带令牌的第二步重新计算后仍为 false 则拒绝（INVALID_STATE，在消费令牌之前；UI 与 MCP 共用此服务函数）。
-  if (input.confirm_token && !context.summary.sample_confirmed) throw Errors.invalidState("请先生成至少 3 个 AI 样例（且每条有收件人的内容规则至少 1 个）后再发送");
   // 请求显式带 send_at 时覆盖草稿；省略则用草稿已存计划（§11.4 Step 1）。
   const resolvedIso = input.send_at !== undefined ? input.send_at : iso(context.row.send_at);
   const sendAt = resolvedIso ? new Date(resolvedIso) : null;
-  const target = { campaign_id: id, send_at: resolvedIso ?? null, channel_id: context.channel.id };
-  if (!input.confirm_token) return issueConfirmToken(db, { action: "campaign_send", target, summary: context.summary });
-  await consumeConfirmToken(db, { token: input.confirm_token, action: "campaign_send", target, summary: context.summary });
+  const version = context.row.updated_at.toISOString();
+  const target = {
+    campaign_id: id,
+    draft_version: version,
+    send_at: resolvedIso ?? null,
+    channel_id: context.channel.id,
+    recipient_ids_hash: context.recipientIdsHash
+  };
+  const action = "campaign_send" as const;
+  const stable = confirmedSummary(context.summary);
+  if (!input.confirm_token) {
+    const challenge = await issueConfirmToken(db, { action, target, summary: stable });
+    return { ...challenge, summary: context.summary };
+  }
+  const token = input.confirm_token;
+
+  const claimed = await db.transaction(async (tx) => {
+    const trx = tx as unknown as Db;
+    const [locked] = await trx.select().from(campaigns).where(eq(campaigns.id, id)).for("update");
+    if (!locked) throw Errors.notFound("活动不存在");
+    if (locked.status !== "draft") throw Errors.invalidState("只有草稿状态的活动可以发送");
+    try {
+      await consumeConfirmToken(trx, { token, action, target, summary: stable, reissue: false });
+    } catch (error) {
+      // 令牌作废须提交，返回而非抛出。
+      if (error instanceof AppError && error.code === "CONFIRM_INVALID") return error;
+      throw error;
+    }
+    if (locked.updated_at.toISOString() !== version) return confirmInvalid("草稿已修改，请重新获取摘要");
+    // 规格 §6.2 第 5 步：令牌与当前摘要一致仍缺样例，说明确认的摘要本就不合格。抛出使事务回滚，令牌不作废。
+    // 原摘要合格而当前缺样例时摘要哈希不同，上面的令牌校验已作废令牌并要求重新确认。
+    if (!context.summary.sample_confirmed) throw Errors.invalidState("请先生成至少 3 个 AI 样例（且每条有收件人的内容规则至少 1 个）后再发送");
+    return null;
+  });
+  if (claimed) throw claimed;
+
+  const mailer = await getChannelMailer(db, context.channel.id, runtime);
+  const smtp = await mailer.verifySmtp();
+  if (!smtp.ok) {
+    throw new AppError("CHANNEL_ERROR", `发送通道「${context.channel.name}」连接或认证失败：${smtp.error ?? "未知错误"}`, {
+      channel_id: context.channel.id,
+      channel_name: context.channel.name
+    });
+  }
+
   const scheduled = !!sendAt && sendAt.getTime() > Date.now();
   const nextStatus: CampaignStatus = scheduled ? "scheduled" : "preparing";
   assertCampaignTransition("draft", nextStatus);
-  const advanced = await db.update(campaigns).set({
-    status: nextStatus,
-    channel_id: context.channel.id,
-    send_at: scheduled ? sendAt : null,
-    updated_at: new Date()
-  }).where(and(eq(campaigns.id, id), eq(campaigns.status, "draft"))).returning({ id: campaigns.id });
-  if (!advanced.length) throw Errors.invalidState("活动已离开草稿状态");
+  await db.transaction(async (tx) => {
+    const trx = tx as unknown as Db;
+    const [locked] = await trx.select().from(campaigns).where(eq(campaigns.id, id)).for("update");
+    if (!locked) throw Errors.notFound("活动不存在");
+    if (locked.status !== "draft") throw Errors.invalidState("活动已离开草稿状态");
+    if (locked.updated_at.toISOString() !== version) throw confirmInvalid("草稿已修改，请重新获取摘要");
+    const rows = await matchedContacts(trx, locked);
+    if (recipientIdsHash(rows) !== context.recipientIdsHash) throw confirmInvalid("收件人名单已变化，请重新获取摘要");
+    const values = rows.map((row) => ({ campaign_id: id, contact_id: row.id, confirmed_status: row.status }));
+    // 分批插入，避免大名单超过 PostgreSQL 单语句参数上限。
+    for (let start = 0; start < values.length; start += 5000) await trx.insert(campaignSendTargets).values(values.slice(start, start + 5000));
+    await trx.update(campaigns).set({
+      status: nextStatus,
+      channel_id: context.channel.id,
+      send_at: scheduled ? sendAt : null,
+      updated_at: new Date()
+    }).where(eq(campaigns.id, id));
+  });
   if (scheduled) return getCampaign(db, id);
-  // 与 scheduler 一致：prepare 失败不得卡在 preparing（令牌已消费）。
+  // 与 scheduler 一致：prepare 失败不得卡在 preparing。
   try {
     return await prepareCampaign(db, id, runtime);
   } catch (error) {
-    const now = new Date();
-    assertCampaignTransition("preparing", "failed");
-    await db.update(campaigns).set({
-      status: "failed",
-      fail_reason: error instanceof Error ? error.message : String(error),
-      finished_at: now,
-      updated_at: now
-    }).where(and(eq(campaigns.id, id), eq(campaigns.status, "preparing")));
+    await failPreparingCampaign(db, id, error);
     return getCampaign(db, id);
   }
 }
 
-/** preparing 快照：筛选此刻的联系人，非 active 也落库为 skipped。T07 到点任务同样调用。 */
+/** 建快照失败：仍为 preparing 的活动置为 failed 并记录原因，同一事务删除确认名单。即时发送与 scheduler 共用。 */
+export async function failPreparingCampaign(db: Db, id: string, error: unknown, now = new Date()): Promise<void> {
+  assertCampaignTransition("preparing", "failed");
+  await db.transaction(async (tx) => {
+    const trx = tx as unknown as Db;
+    const failed = await trx.update(campaigns).set({
+      status: "failed",
+      fail_reason: error instanceof Error ? error.message : String(error),
+      finished_at: now,
+      updated_at: now
+    }).where(and(eq(campaigns.id, id), eq(campaigns.status, "preparing"))).returning({ id: campaigns.id });
+    if (failed.length) await trx.delete(campaignSendTargets).where(eq(campaignSendTargets.campaign_id, id));
+  });
+}
+
+/** message 未发送时，联系人当前状态对应的 skip_reason（联系人已删除视为 CONTACT_INVALID）。preparing 与发送 worker 共用。 */
+export function contactSkipReason(status: string | undefined): "CONTACT_UNSUBSCRIBED" | "CONTACT_BOUNCED" | "CONTACT_INVALID" {
+  if (status === "unsubscribed") return "CONTACT_UNSUBSCRIBED";
+  if (status === "bounced") return "CONTACT_BOUNCED";
+  return "CONTACT_INVALID";
+}
+
+/**
+ * preparing：读取确认时锁定的名单（campaign_send_targets）并逐人写 messages。
+ * 确认时与当前均为 active 的成员入队；确认时已跳过的成员按确认时状态记 skipped，确认后变为非 active 的成员按当前状态记 skipped。
+ * 确认后才符合筛选条件的联系人不追加。无人可入队时仍写 skipped 明细，活动置为 failed。
+ * 名单行在标签读取与 messages 写入之后、同一事务内删除。T07 到点任务同样调用。
+ */
 export async function prepareCampaign(db: Db, id: string, runtime: CampaignRuntimeConfig) {
   await db.transaction(async (tx) => {
     const trx = tx as unknown as Db;
@@ -334,90 +435,85 @@ export async function prepareCampaign(db: Db, id: string, runtime: CampaignRunti
     // 即时发送、调度恢复和取消共享活动行锁。已处理的任务无需重复创建快照。
     if (current.status !== "preparing") return;
     assertCampaignTransition("preparing", "sending");
-    const filter = { ...ContactFilter.parse(current.contact_filter), statuses: [...CONTACT_STATUS_VALUES] };
-    const snapshot = await trx.select().from(contacts).where(buildContactWhere(filter));
-    const active = snapshot.filter((contact) => contact.status === "active");
-    if (!active.length) {
-      await trx.update(campaigns).set({ status: "failed", fail_reason: "收件人为 0", finished_at: new Date(), updated_at: new Date() }).where(eq(campaigns.id, id));
-      return;
+    const snapshot = await trx
+      .select({ contact: contacts, confirmed_status: campaignSendTargets.confirmed_status })
+      .from(campaignSendTargets)
+      .innerJoin(contacts, eq(contacts.id, campaignSendTargets.contact_id))
+      .where(eq(campaignSendTargets.campaign_id, id));
+    const eligible = (item: (typeof snapshot)[number]) => item.confirmed_status === "active" && item.contact.status === "active";
+    const anyEligible = snapshot.some(eligible);
+    const rules = anyEligible ? parseStoredRules(current.content_rules) : [];
+    if (anyEligible) {
+      // 链接快照使用占位联系人，避免首位联系人缺字段导致整个 preparing 失败；缺失变量由 worker 按 message 跳过。
+      const placeholderFields = Object.fromEntries(templateVariables(`${current.subject}${current.html}`).map(({ key }) => [key, `[${key}]`]));
+      const rendered = await renderCampaign(trx, current, {
+        contact: { email: "preview@example.com", name: "示例联系人", company: "示例公司", title: "示例职位", custom_fields: placeholderFields },
+        trackingId: PLACEHOLDER_TRACKING_ID,
+        aiContent: placeholderAiContent(current.ai_blocks)
+      }, runtime);
+      await trx.delete(campaignLinks).where(eq(campaignLinks.campaign_id, id));
+      if (rendered.links.length) await trx.insert(campaignLinks).values(rendered.links.map((link) => ({ campaign_id: id, ...link })));
     }
-    // 链接快照使用占位联系人，避免首位联系人缺字段导致整个 preparing 失败；缺失变量由 worker 按 message 跳过。
-    const placeholderFields = Object.fromEntries(templateVariables(`${current.subject}${current.html}`).map(({ key }) => [key, `[${key}]`]));
-    const rendered = await renderCampaign(trx, current, {
-      contact: { email: "preview@example.com", name: "示例联系人", company: "示例公司", title: "示例职位", custom_fields: placeholderFields },
-      trackingId: "00000000-0000-4000-8000-000000000000",
-      aiContent: Object.fromEntries((current.ai_blocks as { key: string }[]).map((block) => [block.key, `[AI:${block.key}]`]))
-    }, runtime);
-    await trx.delete(campaignLinks).where(eq(campaignLinks.campaign_id, id));
-    if (rendered.links.length) await trx.insert(campaignLinks).values(rendered.links.map((link) => ({ campaign_id: id, ...link })));
-    const reason: Record<Exclude<ContactStatus, "active">, string> = { invalid: "CONTACT_INVALID", bounced: "CONTACT_BOUNCED", unsubscribed: "CONTACT_UNSUBSCRIBED" };
-    // §6.1 / §8.2 V1.1：每个 active 收件人正式匹配一次内容规则并写快照，此后不再重算。
-    const rules = parseStoredRules(current.content_rules);
-    const tagsByContact = rules.length ? await contactTagNames(trx, and(buildContactWhere(filter), eq(contacts.status, "active"))) : new Map<string, string[]>();
+    // §6.1 / §8.2 V1.1：每个入队收件人正式匹配一次内容规则并写快照，此后不再重算。标签查询依赖名单行，须在删除名单之前执行。
+    const queuedTargets = sql`${contacts.id} IN (SELECT ${campaignSendTargets.contact_id} FROM ${campaignSendTargets} WHERE ${campaignSendTargets.campaign_id} = ${id} AND ${campaignSendTargets.confirmed_status} = 'active')`;
+    const tagsByContact = rules.length ? await contactTagNames(trx, and(queuedTargets, eq(contacts.status, "active"))) : new Map<string, string[]>();
     const assetMeta = rules.length ? await assetMetaById(trx, rules) : new Map();
     const ruleFields = (contact: ContactRow) => {
-      if (contact.status !== "active" || !rules.length) return {};
+      if (!rules.length) return {};
       const match = matchContentRule(rules, tagsByContact.get(contact.id) ?? [], contactIndustry(contact.custom_fields));
       if (!match) return {};
       return { content_rule_snapshot: toRuleSnapshot(match), attachment_snapshot: buildAttachmentSnapshot(match.rule, assetMeta) };
     };
-    const values = snapshot.map((contact) => ({
-      campaign_id: id,
-      contact_id: contact.id,
-      email: contact.email,
-      is_test: false,
-      status: contact.status === "active" ? ((current.ai_blocks as unknown[]).length ? "pending_ai" : "queued") : "skipped",
-      skip_reason: contact.status === "active" ? null : reason[contact.status as Exclude<ContactStatus, "active">],
-      ...ruleFields(contact)
-    }));
+    const queuedStatus = (current.ai_blocks as unknown[]).length ? "pending_ai" : "queued";
+    const values = snapshot.map((item) => {
+      const base = { campaign_id: id, contact_id: item.contact.id, email: item.contact.email, is_test: false };
+      if (eligible(item)) return { ...base, status: queuedStatus, skip_reason: null, ...ruleFields(item.contact) };
+      // 摘要中已跳过的成员按确认时状态记原因；确认后才失去资格的成员按当前状态记原因。
+      const reasonStatus = item.confirmed_status === "active" ? item.contact.status : item.confirmed_status;
+      return { ...base, status: "skipped", skip_reason: contactSkipReason(reasonStatus) };
+    });
     // 分批插入，避免大名单超过 PostgreSQL 单语句参数上限。
     for (let start = 0; start < values.length; start += 2000) await trx.insert(messages).values(values.slice(start, start + 2000));
-    await trx.update(campaigns).set({ status: "sending", started_at: new Date(), updated_at: new Date() }).where(eq(campaigns.id, id));
+    await trx.delete(campaignSendTargets).where(eq(campaignSendTargets.campaign_id, id));
+    const now = new Date();
+    if (!anyEligible) {
+      await trx.update(campaigns).set({ status: "failed", fail_reason: "收件人为 0", finished_at: now, updated_at: now }).where(eq(campaigns.id, id));
+      return;
+    }
+    await trx.update(campaigns).set({ status: "sending", started_at: now, updated_at: now }).where(eq(campaigns.id, id));
   });
   return getCampaign(db, id);
 }
 
-/** scheduler 到点后先把 scheduled 置为 preparing，再复用快照逻辑。 */
-export async function prepareScheduledCampaign(db: Db, id: string, runtime: CampaignRuntimeConfig) {
+/** 条件更新：只有读取时的状态仍未变化才转换，否则返回 INVALID_STATE（避免覆盖并发完成或取消）。 */
+async function transitionFrom(db: Db, id: string, to: "paused" | "sending", values: Partial<typeof campaigns.$inferInsert>) {
   const row = await getCampaignRow(db, id);
-  assertCampaignTransition(row.status as CampaignStatus, "preparing");
-  await db.update(campaigns).set({ status: "preparing", updated_at: new Date() }).where(and(eq(campaigns.id, id), eq(campaigns.status, "scheduled")));
-  return prepareCampaign(db, id, runtime);
+  const from = row.status as CampaignStatus;
+  assertCampaignTransition(from, to);
+  const updated = await db.update(campaigns).set({ ...values, status: to, updated_at: new Date() })
+    .where(and(eq(campaigns.id, id), eq(campaigns.status, from))).returning({ id: campaigns.id });
+  if (!updated.length) throw Errors.invalidState("活动状态已变化，请刷新后重试");
+  return getCampaign(db, id);
 }
 
 export async function pauseCampaign(db: Db, id: string) {
-  const row = await getCampaignRow(db, id);
-  assertCampaignTransition(row.status as CampaignStatus, "paused");
-  await db.update(campaigns).set({ status: "paused", pause_reason: "MANUAL", updated_at: new Date() }).where(eq(campaigns.id, id));
-  return getCampaign(db, id);
+  return transitionFrom(db, id, "paused", { pause_reason: "MANUAL" });
 }
 
 export async function resumeCampaign(db: Db, id: string) {
-  const row = await getCampaignRow(db, id);
-  assertCampaignTransition(row.status as CampaignStatus, "sending");
-  await db.update(campaigns).set({ status: "sending", pause_reason: null, updated_at: new Date() }).where(eq(campaigns.id, id));
-  return getCampaign(db, id);
+  return transitionFrom(db, id, "sending", { pause_reason: null });
 }
 
-async function completeIfDone(db: Db, id: string) {
+/** sending 活动没有待处理 message 时置为 completed。worker 热路径用：只做条件更新，不回读活动。 */
+export async function markCampaignCompletedIfDone(db: Db, id: string): Promise<boolean> {
   assertCampaignTransition("sending", "completed");
   const now = new Date();
-  const [completed] = await db.update(campaigns)
+  const completed = await db.update(campaigns)
     .set({ status: "completed", finished_at: now, updated_at: now })
     .where(and(eq(campaigns.id, id), eq(campaigns.status, "sending"), sql`NOT EXISTS (
       SELECT 1 FROM messages WHERE campaign_id = ${id} AND status IN ('pending_ai', 'queued', 'sending')
-    )`)).returning();
-  return completed;
-}
-
-export async function completeCampaignIfDone(db: Db, id: string) {
-  const completed = await completeIfDone(db, id);
-  return completed ? campaignToDto(completed) : getCampaign(db, id);
-}
-
-/** worker 热路径用：只做条件更新，不再回读活动、不做 DTO 解析。 */
-export async function markCampaignCompletedIfDone(db: Db, id: string): Promise<boolean> {
-  return !!(await completeIfDone(db, id));
+    )`)).returning({ id: campaigns.id });
+  return completed.length > 0;
 }
 
 export async function cancelCampaign(db: Db, id: string, confirmToken?: string): Promise<CampaignDto | ConfirmChallenge<{ queued_messages: number }>> {
@@ -437,6 +533,8 @@ export async function cancelCampaign(db: Db, id: string, confirmToken?: string):
       throw error;
     }
     await trx.update(messages).set({ status: "skipped", skip_reason: "CAMPAIGN_CANCELLED" }).where(queued);
+    // scheduled 或 preparing 活动的确认名单不再进入准备流程，与终态同一事务删除。
+    await trx.delete(campaignSendTargets).where(eq(campaignSendTargets.campaign_id, id));
     const [cancelled] = await trx.update(campaigns).set({ status: "cancelled", finished_at: new Date(), updated_at: new Date() })
       .where(eq(campaigns.id, id)).returning();
     return campaignToDto(cancelled!);

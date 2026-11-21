@@ -15,6 +15,7 @@ import {
   Loader2
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -68,6 +69,7 @@ export const ImageExtension = Image.extend({
 });
 
 function TiptapImage(props: NodeViewProps) {
+  const t = useTranslations("Editor");
   const { node, editor, selected, deleteNode, updateAttributes } = props;
   const imageRef = useRef<HTMLImageElement | null>(null);
   const nodeRef = useRef<HTMLDivElement | null>(null);
@@ -268,14 +270,14 @@ function TiptapImage(props: NodeViewProps) {
             onBlur={handleCaptionBlur}
             onKeyDown={handleCaptionKeyDown}
             className="text-muted-foreground mt-2 text-center text-sm focus:ring-0"
-            placeholder="Add a caption..."
+            placeholder={t("caption")}
             autoFocus
           />
         ) : (
           <div
             className="text-muted-foreground mt-2 cursor-text text-center text-sm"
             onClick={() => editor?.isEditable && setEditingCaption(true)}>
-            {caption || "Add a caption..."}
+            {caption || t("caption")}
           </div>
         )}
 
@@ -316,16 +318,16 @@ function TiptapImage(props: NodeViewProps) {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" alignOffset={-90} className="mt-1 text-sm">
                 <DropdownMenuItem onClick={() => setEditingCaption(true)}>
-                  <Edit className="mr-2 size-4" /> Edit Caption
+                  <Edit className="mr-2 size-4" /> {t("editCaption")}
                 </DropdownMenuItem>
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger>
-                    <ImageIcon className="mr-2 size-4" /> Replace Image
+                    <ImageIcon className="mr-2 size-4" /> {t("replaceImage")}
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent className="w-fit min-w-52 p-2">
                     <div className="space-y-4">
                       <div>
-                        <p className="mb-2 text-xs font-medium">Upload Image</p>
+                        <p className="mb-2 text-xs font-medium">{t("uploadImage")}</p>
                         <input
                           ref={fileInputRef}
                           type="file"
@@ -340,12 +342,12 @@ function TiptapImage(props: NodeViewProps) {
                           {uploading ? (
                             <>
                               <Loader2 className="h-4 w-4 animate-spin" />
-                              <span>Uploading...</span>
+                              <span>{t("uploading")}</span>
                             </>
                           ) : (
                             <>
                               <ImageIcon className="h-4 w-4" />
-                              <span>Choose Image</span>
+                              <span>{t("chooseImage")}</span>
                             </>
                           )}
                         </label>
@@ -353,12 +355,12 @@ function TiptapImage(props: NodeViewProps) {
                       </div>
 
                       <div>
-                        <p className="mb-2 text-xs font-medium">Or use URL</p>
+                        <p className="mb-2 text-xs font-medium">{t("orUrl")}</p>
                         <div className="space-y-2">
                           <Input
                             value={imageUrl}
                             onChange={(e) => setImageUrl(e.target.value)}
-                            placeholder="Enter image URL..."
+                            placeholder={t("imageUrl")}
                             className="text-xs"
                           />
                           <Button
@@ -366,17 +368,17 @@ function TiptapImage(props: NodeViewProps) {
                             className="w-full"
                             disabled={!imageUrl}
                             size="sm">
-                            Replace with URL
+                            {t("replaceWithUrl")}
                           </Button>
                         </div>
                       </div>
 
                       <div>
-                        <p className="mb-2 text-xs font-medium">Alt Text</p>
+                        <p className="mb-2 text-xs font-medium">{t("altTextLabel")}</p>
                         <Input
                           value={altText}
                           onChange={(e) => setAltText(e.target.value)}
-                          placeholder="Alt text (optional)"
+                          placeholder={t("altText")}
                           className="text-xs"
                         />
                       </div>
@@ -394,13 +396,13 @@ function TiptapImage(props: NodeViewProps) {
                       });
                     }
                   }}>
-                  <Maximize className="mr-2 size-4" /> Full Width
+                  <Maximize className="mr-2 size-4" /> {t("fullWidth")}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   className="text-destructive focus:text-destructive"
                   onClick={deleteNode}>
-                  <Trash className="mr-2 size-4" /> Delete Image
+                  <Trash className="mr-2 size-4" /> {t("deleteImage")}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

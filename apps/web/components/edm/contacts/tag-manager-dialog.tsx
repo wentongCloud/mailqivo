@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { CheckIcon, PencilIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import type { TagDto } from "@mailqivo/shared";
 
@@ -29,8 +30,6 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 
-const errorMessage = (err: unknown) => (err instanceof ApiError ? err.message : "操作失败，请稍后重试");
-
 /** 标签管理：新建、重命名、删除（删除用 AlertDialog 二次确认）。 */
 export function TagManagerDialog({
   open,
@@ -39,6 +38,8 @@ export function TagManagerDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const t = useTranslations("Tags");
+  const tc = useTranslations("Common");
   const { data: tags, isLoading } = useTags();
   const create = useCreateTag();
   const rename = useRenameTag();
@@ -46,6 +47,10 @@ export function TagManagerDialog({
   const [newName, setNewName] = React.useState("");
   const [editing, setEditing] = React.useState<{ id: string; name: string } | null>(null);
   const [deleting, setDeleting] = React.useState<TagDto | null>(null);
+
+  function showRequestError(err: unknown) {
+    toast.error(err instanceof ApiError ? err.message : tc("requestFailed"));
+  }
 
   async function submitNew(e: React.FormEvent) {
     e.preventDefault();
@@ -55,7 +60,7 @@ export function TagManagerDialog({
       await create.mutateAsync(name);
       setNewName("");
     } catch (err) {
-      toast.error(errorMessage(err));
+      showRequestError(err);
     }
   }
 
@@ -67,7 +72,7 @@ export function TagManagerDialog({
       await rename.mutateAsync({ id: editing.id, name });
       setEditing(null);
     } catch (err) {
-      toast.error(errorMessage(err));
+      showRequestError(err);
     }
   }
 
@@ -75,9 +80,9 @@ export function TagManagerDialog({
     if (!deleting) return;
     try {
       await remove.mutateAsync(deleting.id);
-      toast.success(`已删除标签“${deleting.name}”`);
+      toast.success(t("deleted", { name: deleting.name }));
     } catch (err) {
-      toast.error(errorMessage(err));
+      showRequestError(err);
     } finally {
       setDeleting(null);
     }
@@ -88,19 +93,19 @@ export function TagManagerDialog({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>标签管理</DialogTitle>
-            <DialogDescription>新建、重命名或删除标签。删除标签只会移除联系人上的该标签。</DialogDescription>
+            <DialogTitle>{t("dialogTitle")}</DialogTitle>
+            <DialogDescription>{t("dialogDesc")}</DialogDescription>
           </DialogHeader>
 
           <form onSubmit={submitNew} className="flex gap-2">
             <Input
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              placeholder="新标签名称"
+              placeholder={t("newName")}
               maxLength={50}
             />
             <Button type="submit" disabled={create.isPending || !newName.trim()}>
-              <PlusIcon /> 新建
+              <PlusIcon /> {t("create")}
             </Button>
           </form>
 
@@ -110,8 +115,8 @@ export function TagManagerDialog({
             ) : !tags || tags.length === 0 ? (
               <Empty className="border">
                 <EmptyHeader>
-                  <EmptyTitle>还没有标签</EmptyTitle>
-                  <EmptyDescription>在上方输入名称即可新建。</EmptyDescription>
+                  <EmptyTitle>{t("emptyTitle")}</EmptyTitle>
+                  <EmptyDescription>{t("emptyDesc")}</EmptyDescription>
                 </EmptyHeader>
               </Empty>
             ) : (
@@ -130,28 +135,28 @@ export function TagManagerDialog({
                           if (e.key === "Escape") setEditing(null);
                         }}
                       />
-                      <Button size="icon-sm" variant="ghost" onClick={submitRename} aria-label="保存">
+                      <Button size="icon-sm" variant="ghost" onClick={submitRename} aria-label={tc("save")}>
                         <CheckIcon />
                       </Button>
-                      <Button size="icon-sm" variant="ghost" onClick={() => setEditing(null)} aria-label="取消">
+                      <Button size="icon-sm" variant="ghost" onClick={() => setEditing(null)} aria-label={tc("cancel")}>
                         <XIcon />
                       </Button>
                     </>
                   ) : (
                     <>
                       <span className="min-w-0 flex-1 truncate text-sm font-medium">{tag.name}</span>
-                      <span className="text-muted-foreground text-xs tabular-nums">{tag.contact_count} 人</span>
+                      <span className="text-muted-foreground text-xs tabular-nums">{t("people", { count: tag.contact_count })}</span>
                       <Button
                         size="icon-sm"
                         variant="ghost"
-                        aria-label={`重命名 ${tag.name}`}
+                        aria-label={t("rename", { name: tag.name })}
                         onClick={() => setEditing({ id: tag.id, name: tag.name })}>
                         <PencilIcon />
                       </Button>
                       <Button
                         size="icon-sm"
                         variant="ghost"
-                        aria-label={`删除 ${tag.name}`}
+                        aria-label={t("delete", { name: tag.name })}
                         onClick={() => setDeleting(tag)}>
                         <Trash2Icon />
                       </Button>
@@ -167,15 +172,15 @@ export function TagManagerDialog({
       <AlertDialog open={deleting !== null} onOpenChange={(o) => !o && setDeleting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>删除标签“{deleting?.name}”？</AlertDialogTitle>
+            <AlertDialogTitle>{t("deleteTitle", { name: deleting?.name ?? "" })}</AlertDialogTitle>
             <AlertDialogDescription>
-              将从 {deleting?.contact_count ?? 0} 个联系人身上移除该标签，已有活动的筛选条件若引用它将不再命中。此操作不可撤销。
+              {t("deleteDesc", { count: deleting?.contact_count ?? 0 })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel>{tc("cancel")}</AlertDialogCancel>
             <AlertDialogAction variant="destructive" onClick={confirmDelete}>
-              删除
+              {tc("delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

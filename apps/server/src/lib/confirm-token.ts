@@ -10,7 +10,7 @@
  *   ...执行写操作...
  *
  * 令牌有效期 10 分钟、只能用一次。校验失败一律抛 CONFIRM_INVALID（409），`details.reason` 说明原因：
- * 摘要或目标变化时，details 里附带 `summary` 与新的 `confirm_token`（旧令牌同时作废）。
+ * 摘要或目标变化时，details 里附带 `summary` 与新的 `confirm_token`（旧令牌同时作废）；`reissue=false` 时不附。
  */
 import { createHash, randomBytes } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
@@ -63,10 +63,13 @@ export async function issueConfirmToken<S>(db: Db, params: Params<S>): Promise<C
   return { requires_confirmation: true, confirm_token: token, summary: params.summary };
 }
 
-/** 第二步：校验并作废令牌。通过则正常返回，之后调用方才能执行写操作。 */
+/**
+ * 第二步：校验并作废令牌。通过则正常返回，之后调用方才能执行写操作。
+ * `reissue=false`（活动发送，规格 §5.4 第 2 条）：不一致时不附新摘要与新令牌，由用户重新请求摘要。
+ */
 export async function consumeConfirmToken<S>(
   db: Db,
-  params: Params<S> & { token: string }
+  params: Params<S> & { token: string; reissue?: boolean }
 ): Promise<void> {
   const now = params.now ?? new Date();
   const fail = (reason: ConfirmTokenReason, message: string, extra?: Record<string, unknown>) =>
@@ -88,9 +91,11 @@ export async function consumeConfirmToken<S>(
   const targetMatches = stableStringify(row.target) === stableStringify(params.target);
   const summaryMatches = row.summary_hash === summaryHash(params.summary);
   if (!targetMatches || !summaryMatches) {
+    const reason = targetMatches ? "SUMMARY_CHANGED" : "TARGET_MISMATCH";
+    if (params.reissue === false) throw fail(reason, "确认后内容或名单已变化，请重新获取摘要");
     const next = await issueConfirmToken(db, params);
     throw fail(
-      targetMatches ? "SUMMARY_CHANGED" : "TARGET_MISMATCH",
+      reason,
       targetMatches ? "数据已发生变化，请重新确认最新摘要" : "操作内容与确认时不一致，请重新确认",
       { summary: next.summary, confirm_token: next.confirm_token }
     );

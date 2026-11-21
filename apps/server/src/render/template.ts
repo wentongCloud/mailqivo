@@ -43,14 +43,19 @@ const SYSTEM_KEYS = ["sys.unsubscribe_url", "unsubscribe_url", "公司名", "公
 /** 不依赖自定义字段、总能解析的变量名（ai.* 另按区块校验）。发送前校验用。 */
 export const BUILTIN_TEMPLATE_KEYS: ReadonlySet<string> = new Set([...SYSTEM_KEYS, ...Object.keys(CONTACT_FIELD_KEYS), SALUTATION_KEY]);
 
+/** `{{ai.x}}` 与 `{{ai_x}}` 都引用 AI 区块 `x`；返回区块 key，非 AI 变量返回 undefined。 */
+export function aiBlockKey(key: string): string | undefined {
+  return key.startsWith("ai.") || key.startsWith("ai_") ? key.slice(3) : undefined;
+}
+
 function valueForKey(key: string, context: RenderContext): string | undefined {
   if (key === "sys.unsubscribe_url" || key === "unsubscribe_url") {
     return context.unsubscribe_url;
   }
   if (key === "公司名") return context.settings.company_name;
   if (key === "公司地址") return context.settings.company_address;
-  if (key.startsWith("ai.")) return context.ai_content?.[key.slice(3)];
-  if (key.startsWith("ai_")) return context.ai_content?.[key.slice(3)];
+  const blockKey = aiBlockKey(key);
+  if (blockKey !== undefined) return context.ai_content?.[blockKey];
   const field = CONTACT_FIELD_KEYS[key];
   if (field) return context.contact[field] ?? undefined;
   if (key === SALUTATION_KEY) return resolveSalutation(context.contact);
@@ -73,21 +78,23 @@ export function renderTemplate(
     }
     if (!html) return value.replace(/[\r\n]+/g, "");
     const escaped = escapeHtml(value);
-    return key.startsWith("ai.") || key.startsWith("ai_") ? escaped.replaceAll("\n", "<br>") : escaped;
+    return aiBlockKey(key) === undefined ? escaped : escaped.replaceAll("\n", "<br>");
   });
   return html ? rendered : rendered.replace(/[\r\n]+/g, "");
 }
 
-/** 返回模板中引用的变量名（去重，保持出现顺序），供发送前校验。 */
+/**
+ * 返回模板中引用的变量名（去重，保持出现顺序），供发送前校验。
+ * `hasDefault` 仅当该变量的每一处引用都带默认值时为 true：逐封渲染在任一处缺值时都会跳过该封。
+ */
 export function templateVariables(source: string): { key: string; hasDefault: boolean }[] {
-  const result: { key: string; hasDefault: boolean }[] = [];
-  const seen = new Set<string>();
+  const byKey = new Map<string, { key: string; hasDefault: boolean }>();
   for (const match of source.matchAll(TEMPLATE_VARIABLE_PATTERN)) {
     const key = match[1]!;
-    if (!seen.has(key)) {
-      seen.add(key);
-      result.push({ key, hasDefault: match[2] !== undefined });
-    }
+    const hasDefault = match[2] !== undefined;
+    const item = byKey.get(key);
+    if (item) item.hasDefault &&= hasDefault;
+    else byKey.set(key, { key, hasDefault });
   }
-  return result;
+  return [...byKey.values()];
 }

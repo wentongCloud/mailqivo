@@ -1,14 +1,13 @@
 import { ChannelBody, ChannelConfig, EmailInput, type ChannelDto } from "@mailqivo/shared";
 import { z } from "zod";
 
-const mailbox = z.string().trim().refine((value) => EmailInput.safeParse(value).success, {
-  message: "邮箱格式不正确"
-});
-
 const channelName = (account: string) => account.slice(0, 100);
 const senderName = (account: string) => account.split("@")[0]!.slice(0, 200);
 
-export function channelFormSchema(item: ChannelDto | null) {
+export function channelFormSchema(item: ChannelDto | null, invalidEmail: string) {
+  const mailbox = z.string().trim().refine((value) => EmailInput.safeParse(value).success, {
+    message: invalidEmail
+  });
   // Older channels may authenticate with a username and send from a separate address.
   const previousAccount = item?.smtp.user ?? "";
   const separateSender = item && previousAccount.toLowerCase() !== item.from_email.toLowerCase();

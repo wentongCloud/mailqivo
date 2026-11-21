@@ -6,12 +6,12 @@ import { AppError } from "../../lib/errors.ts";
 import { assertUnsubscribeConfigured } from "../../mail/unsubscribe.ts";
 import type { MailAttachment } from "../../mail/channel.ts";
 import { AssetUnavailableError, readAssetVerified } from "../assets/index.ts";
-import { templateVariables, type RenderContact } from "../../render/template.ts";
+import { aiBlockKey, templateVariables, type RenderContact } from "../../render/template.ts";
 import { getChannelMailer } from "../channels/service.ts";
 import { getContact } from "../contacts/service.ts";
 import { getSettings } from "../settings/service.ts";
-import { resolveChannelForTest } from "./channel.ts";
-import { contactForRender, renderCampaign } from "./render.ts";
+import { resolveCampaignChannel } from "./channel.ts";
+import { contactForRender, placeholderAiContent, renderCampaign } from "./render.ts";
 import { getCampaignRow, type CampaignRuntimeConfig } from "./service.ts";
 import { assertRuleAttachments, contactIndustry, matchContentRule, parseStoredRules } from "./content-rules.ts";
 
@@ -19,7 +19,7 @@ import { assertRuleAttachments, contactIndustry, matchContentRule, parseStoredRu
  * §7.3 V1.1：按所用联系人（占位联系人无标签）临时匹配规则，附件与 send 第一步同一校验；失败 → VALIDATION。
  * 返回按规则顺序、去重后的附件内容。
  */
-async function testSendAttachments(db: Parameters<typeof getCampaignRow>[0], runtime: CampaignRuntimeConfig, rulesValue: unknown, contactTags: string[], industry = ""): Promise<MailAttachment[]> {
+async function testSendAttachments(db: Db, runtime: CampaignRuntimeConfig, rulesValue: unknown, contactTags: string[], industry = ""): Promise<MailAttachment[]> {
   const rules = parseStoredRules(rulesValue);
   const match = matchContentRule(rules, contactTags, industry);
   if (!match || !match.rule.attachment_ids.length) return [];
@@ -39,7 +39,7 @@ async function testSendAttachments(db: Parameters<typeof getCampaignRow>[0], run
 function placeholderContact(source: string, email: string): RenderContact {
   const custom_fields: Record<string, string> = {};
   for (const { key } of templateVariables(source)) {
-    if (!key.startsWith("sys.") && !key.startsWith("ai.") && !key.startsWith("ai_")) custom_fields[key] = `[${key}]`;
+    if (!key.startsWith("sys.") && aiBlockKey(key) === undefined) custom_fields[key] = `[${key}]`;
   }
   return { email, name: "示例联系人", company: "示例公司", title: "示例职位", custom_fields };
 }
@@ -48,13 +48,13 @@ function placeholderContact(source: string, email: string): RenderContact {
 export async function testSendCampaign(db: Db, id: string, body: CampaignTestSendBody, runtime: CampaignRuntimeConfig): Promise<CampaignTestSendResult> {
   assertUnsubscribeConfigured(runtime);
   const campaign = await getCampaignRow(db, id);
-  const channel = await resolveChannelForTest(db, campaign);
+  const channel = await resolveCampaignChannel(db, campaign);
   const mailer = await getChannelMailer(db, channel.id, runtime);
   const selected = body.contact_id ? await getContact(db, body.contact_id) : null;
   const settings = await getSettings(db);
   const source = `${campaign.subject}${campaign.html}${settings.footer_html}`;
   const attachments = await testSendAttachments(db, runtime, campaign.content_rules, selected?.tags ?? [], selected ? contactIndustry(selected.custom_fields) : "");
-  const aiContent = Object.fromEntries((campaign.ai_blocks as { key: string }[]).map((block) => [block.key, `[AI:${block.key}]`]));
+  const aiContent = placeholderAiContent(campaign.ai_blocks);
   const items: CampaignTestSendResult["items"] = [];
 
   for (const email of body.emails) {

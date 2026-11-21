@@ -1,3 +1,3 @@
 {
-  "checks": ["scripts/check-campaign-deletion.ts"]
+  "checks": ["scripts/check-campaign-deletion.ts", "scripts/check-campaign-send.ts"]
 }

@@ -13,13 +13,10 @@ import { MissingVarError } from "../../render/template.ts";
 import { buildContactWhere } from "../contacts/where.ts";
 import { getSettings } from "../settings/service.ts";
 import { assertRuleAttachments, contactIndustry, contactTagNames, matchContentRule, parseStoredRules } from "./content-rules.ts";
-import { renderCampaign } from "./render.ts";
+import { contactForRender, PLACEHOLDER_TRACKING_ID, renderCampaign } from "./render.ts";
 import { getCampaignRow, type CampaignRuntimeConfig } from "./service.ts";
 
 type ContactRow = typeof contacts.$inferSelect;
-
-/** 预览渲染使用的占位 tracking_id（§8.3「追踪 URL 用占位值」）。 */
-export const PREVIEW_TRACKING_ID = "00000000-0000-4000-8000-000000000000";
 
 async function pickContacts(db: Db, row: { contact_filter: unknown; content_rules: unknown }, body: CampaignPreviewBody): Promise<ContactRow[]> {
   if (body.contact_ids) {
@@ -126,8 +123,8 @@ export async function previewCampaign(
     let text = "";
     try {
       const rendered = await renderCampaign(db, row, {
-        contact: { email: contact.email, name: contact.name, company: contact.company, title: contact.title, custom_fields: contact.custom_fields as Record<string, string> },
-        trackingId: PREVIEW_TRACKING_ID,
+        contact: contactForRender(contact),
+        trackingId: PLACEHOLDER_TRACKING_ID,
         preview: true,
         aiContent: renderAi
       }, runtime);

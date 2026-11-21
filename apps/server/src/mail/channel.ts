@@ -24,10 +24,12 @@ export type SendReceipt =
   | { ok: false; code?: number; enh?: string; response: string; errCode?: string };
 
 export type VerifyResult = { smtp: boolean; imap: boolean; error?: string };
+export type SmtpVerifyResult = { ok: boolean; error?: string };
 
 export interface MailChannel {
   send(mail: OutgoingMail): Promise<SendReceipt>;
   verify(): Promise<VerifyResult>;
+  verifySmtp(): Promise<SmtpVerifyResult>;
   /** 关闭长连接（持久模式的 SMTP 连接池）；一次性实例可不实现。 */
   close?(): void;
 }

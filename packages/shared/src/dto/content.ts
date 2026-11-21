@@ -12,6 +12,17 @@ export const TemplateBody = z.object({
 export type TemplateBody = z.infer<typeof TemplateBody>;
 export type TemplateDto = TemplateBody & { id: string; created_at: string; updated_at: string };
 
+/** 规格 §7.2「模板导入诊断」：活动第三步套用模板时检查模板正文。 */
+export const TemplateDiagnoseBody = z.object({
+  /** 本次实际套用到草稿的模板正文；诊断按此正文进行，不重读数据库，避免与界面所见正文不一致。 */
+  html: z.string(),
+  /** 当前活动草稿的 AI 区块 key；`{{ai.x}}` / `{{ai_x}}` 引用这些区块时不算未知变量。 */
+  ai_block_keys: z.array(z.string().trim().min(1)).max(50).default([])
+});
+export type TemplateDiagnoseBody = z.infer<typeof TemplateDiagnoseBody>;
+export type TemplateIssue = { kind: "syntax"; fragment: string } | { kind: "unknown_variable"; key: string };
+export type TemplateDiagnosis = { issues: TemplateIssue[] };
+
 export const SignatureBody = z.object({
   name: z.string().trim().min(1).max(100),
   html: z.string(),

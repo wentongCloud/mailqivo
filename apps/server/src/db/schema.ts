@@ -327,6 +327,33 @@ export const campaigns = pgTable(
   ]
 );
 
+/**
+ * 规格 §6.1 / §6.2 第 7 条：发送确认时锁定的收件人集合（含非 active）。
+ * 确认提交时写入；preparing 在同一事务读取后删除，名单此后只由 messages 保存。
+ */
+export const campaignSendTargets = pgTable(
+  "campaign_send_targets",
+  {
+    campaign_id: uuid().notNull(),
+    contact_id: uuid().notNull(),
+    // 确认时的联系人状态：只有确认时为 active 的成员可以入队（规格 §6.1）。
+    confirmed_status: text().notNull()
+  },
+  (t) => [
+    primaryKey({ name: "campaign_send_targets_pkey", columns: [t.campaign_id, t.contact_id] }),
+    foreignKey({
+      name: "campaign_send_targets_campaign_id_fkey",
+      columns: [t.campaign_id],
+      foreignColumns: [campaigns.id]
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "campaign_send_targets_contact_id_fkey",
+      columns: [t.contact_id],
+      foreignColumns: [contacts.id]
+    }).onDelete("cascade")
+  ]
+);
+
 /** 点击追踪用，渲染时生成 */
 export const campaignLinks = pgTable(
   "campaign_links",

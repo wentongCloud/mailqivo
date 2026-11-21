@@ -3,7 +3,7 @@ import type { Config } from "../config.ts";
 import type { Db } from "../db/client.ts";
 import { campaigns } from "../db/schema.ts";
 import { dayInTimezone } from "../lib/timezone.ts";
-import { prepareCampaign } from "../modules/campaigns/service.ts";
+import { failPreparingCampaign, prepareCampaign } from "../modules/campaigns/service.ts";
 import { pollAllChannels } from "../inbound/imap-poller.ts";
 import { runExclusive, SINGLETON_LOCKS } from "./singleton.ts";
 
@@ -28,9 +28,7 @@ export async function runSchedulerOnce(db: Db, runtime: SchedulerRuntime, now = 
     try {
       await prepareCampaign(db, campaign.id, runtime);
     } catch (error) {
-      await db.update(campaigns).set({
-        status: "failed", fail_reason: error instanceof Error ? error.message : String(error), finished_at: now, updated_at: now
-      }).where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "preparing")));
+      await failPreparingCampaign(db, campaign.id, error, now);
     }
   }
   return { prepared: due.length, resumed };

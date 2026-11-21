@@ -74,6 +74,9 @@ export const McpCampaignListInput = z.object({
   created_to: IsoDateTime.optional(),
   page,
   page_size: pageSize
+}).refine((input) => !input.created_from || !input.created_to || new Date(input.created_from) <= new Date(input.created_to), {
+  path: ["created_from"],
+  message: "created_from 不能晚于 created_to"
 });
 export type McpCampaignListInput = z.infer<typeof McpCampaignListInput>;
 

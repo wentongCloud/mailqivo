@@ -15,6 +15,7 @@ import {
 } from "@tiptap/react";
 import { Image, Link, Upload, Loader2, X } from "lucide-react";
 import { type FormEvent, useState } from "react";
+import { useTranslations } from "next-intl";
 import { useImageUpload } from "../hooks/use-image-upload";
 import { cn } from "@/lib/utils";
 
@@ -74,6 +75,7 @@ export const ImagePlaceholder = Node.create<ImagePlaceholderOptions>({
 });
 
 function ImagePlaceholderComponent(props: NodeViewProps) {
+  const t = useTranslations("Editor");
   const { editor, extension, selected } = props;
   const [isExpanded, setIsExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<"upload" | "url">("upload");
@@ -163,14 +165,14 @@ function ImagePlaceholderComponent(props: NodeViewProps) {
               <Image className="h-6 w-6" />
             </div>
             <div className="text-center">
-              <p className="text-sm font-medium">Click to upload or drag and drop</p>
-              <p className="text-muted-foreground text-xs">SVG, PNG, JPG or GIF</p>
+              <p className="text-sm font-medium">{t("dropHint")}</p>
+              <p className="text-muted-foreground text-xs">{t("formats")}</p>
             </div>
           </div>
         ) : (
           <div className="bg-card rounded-lg border p-4 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold">Add Image</h3>
+              <h3 className="text-lg font-semibold">{t("addImage")}</h3>
               <Button variant="ghost" size="icon" onClick={() => setIsExpanded(false)}>
                 <X className="h-4 w-4" />
               </Button>
@@ -180,11 +182,11 @@ function ImagePlaceholderComponent(props: NodeViewProps) {
               <TabsList className="grid w-full grid-cols-2">
                 <TabsTrigger value="upload">
                   <Upload className="mr-2 h-4 w-4" />
-                  Upload
+                  {t("upload")}
                 </TabsTrigger>
                 <TabsTrigger value="url">
                   <Link className="mr-2 h-4 w-4" />
-                  URL
+                  {t("url")}
                 </TabsTrigger>
               </TabsList>
 
@@ -203,22 +205,22 @@ function ImagePlaceholderComponent(props: NodeViewProps) {
                     <div className="space-y-4">
                       <img
                         src={previewUrl}
-                        alt="Preview"
+                        alt={t("imagePreview")}
                         className="mx-auto max-h-[200px] rounded-lg object-cover"
                       />
                       <div className="space-y-2">
                         <Input
                           value={altText}
                           onChange={(e) => setAltText(e.target.value)}
-                          placeholder="Alt text (optional)"
+                          placeholder={t("altText")}
                         />
                         <div className="flex justify-end gap-2">
                           <Button variant="outline" onClick={handleRemove} disabled={uploading}>
-                            Remove
+                            {t("remove")}
                           </Button>
                           <Button disabled={uploading}>
                             {uploading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                            Upload
+                            {t("upload")}
                           </Button>
                         </div>
                       </div>
@@ -238,8 +240,8 @@ function ImagePlaceholderComponent(props: NodeViewProps) {
                         className="flex cursor-pointer flex-col items-center gap-4">
                         <Upload className="text-muted-foreground h-8 w-8" />
                         <div>
-                          <p className="text-sm font-medium">Click to upload or drag and drop</p>
-                          <p className="text-muted-foreground text-xs">SVG, PNG, JPG or GIF</p>
+                          <p className="text-sm font-medium">{t("dropHint")}</p>
+                          <p className="text-muted-foreground text-xs">{t("formats")}</p>
                         </div>
                       </label>
                     </>
@@ -257,21 +259,21 @@ function ImagePlaceholderComponent(props: NodeViewProps) {
                         setUrl(e.target.value);
                         if (urlError) setUrlError(false);
                       }}
-                      placeholder="Enter image URL..."
+                      placeholder={t("imageUrl")}
                     />
                     {urlError && (
-                      <p className="text-destructive text-xs">Please enter a valid URL</p>
+                      <p className="text-destructive text-xs">{t("invalidUrl")}</p>
                     )}
                   </div>
                   <div className="space-y-2">
                     <Input
                       value={altText}
                       onChange={(e) => setAltText(e.target.value)}
-                      placeholder="Alt text (optional)"
+                      placeholder={t("altText")}
                     />
                   </div>
                   <Button onClick={handleInsertEmbed} className="w-full" disabled={!url}>
-                    Add Image
+                    {t("addImage")}
                   </Button>
                 </div>
               </TabsContent>

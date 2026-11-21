@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { ListOrdered } from "lucide-react";
 import React from "react";
 
@@ -15,6 +16,7 @@ import { useToolbar } from "./toolbar-provider";
 const OrderedListToolbar = React.forwardRef<HTMLButtonElement, ButtonProps>(
 	({ className, onClick, children, ...props }, ref) => {
 		const { editor } = useToolbar();
+		const t = useTranslations("Editor");
 		return (
 			<Tooltip>
 				<TooltipTrigger asChild>
@@ -39,7 +41,7 @@ const OrderedListToolbar = React.forwardRef<HTMLButtonElement, ButtonProps>(
 					</Button>
 				</TooltipTrigger>
 				<TooltipContent>
-					<span>Ordered list</span>
+					<span>{t("orderedList")}</span>
 				</TooltipContent>
 			</Tooltip>
 		);

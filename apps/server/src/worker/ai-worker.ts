@@ -87,22 +87,6 @@ export async function processPendingAiMessage(db: Db, llm: LlmClient, message: M
   }
 }
 
-export async function runAiWorkerOnce(db: Db, runtime: AiWorkerRuntime, options: AiWorkerOptions = {}): Promise<number> {
-  const llm = options.llm !== undefined ? options.llm : createLlmClient(runtime);
-  // SPEC-GAP: AI 关闭时（无 key、非 mock）不处理 pending_ai，也不置为 AI_FAILED；配置 key 后自动继续。
-  if (!llm) return 0;
-  const claimed = await claimPendingAiMessages(db, options.concurrency ?? runtime.LLM_CONCURRENCY);
-  await Promise.all(claimed.map(async (message) => {
-    try {
-      await processPendingAiMessage(db, llm, message, options);
-    } catch (error) {
-      // 单条异常不影响其他 message；租约到期后可再次领取。
-      console.error(`[ai-worker] message ${message.id} 处理失败`, error);
-    }
-  }));
-  return claimed.length;
-}
-
 export function startAiWorker(db: Db, runtime: AiWorkerRuntime, options: AiWorkerOptions = {}) {
   const llm = options.llm !== undefined ? options.llm : createLlmClient(runtime);
   const shared = { ...options, llm };
