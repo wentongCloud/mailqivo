@@ -16,6 +16,7 @@
 开始任务时只读取与当前任务相关的权威文档。设计文件在 `local-data` 的 `docs/`，不在 `main` 重建副本。
 
 - 编码、测试和模块边界：`docs/开发约定.md`
+- 修改程序代码时，按 `docs/开发约定.md`「版本号」在同一次更新中提高版本号。
 - 产品实现规格：`docs/Mailqivo实现规格.md`
 - 插件设计：`docs/Mailqivo插件设计文档.md`
 - 已确认教训在 `tasks/lessons.md`，过程勾选在 `tasks/todo.md`。二者不是设计权威。
